@@ -1,0 +1,32 @@
+{
+ "rot0_cookie": {
+  "dE_mean": 0.51,
+  "dE_p95": 1.29,
+  "dE_max": 6.02,
+  "mean_rgb_diff": [
+   0.16,
+   0.1,
+   0.11
+  ]
+ },
+ "rot0_nocookie": {
+  "dE_mean": 0.51,
+  "dE_p95": 1.29,
+  "dE_max": 6.02,
+  "mean_rgb_diff": [
+   0.16,
+   0.1,
+   0.11
+  ]
+ },
+ "rot-2_cookie": {
+  "dE_mean": 0.51,
+  "dE_p95": 1.29,
+  "dE_max": 5.63,
+  "mean_rgb_diff": [
+   0.16,
+   0.1,
+   0.11
+  ]
+ }
+}

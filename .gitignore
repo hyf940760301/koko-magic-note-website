@@ -1,0 +1,9 @@
+.DS_Store
+
+# 自动生成的调试截图与临时裁图
+shots/
+qa/crops/
+qa/gate_report.json
+
+# 已解压的重复字体压缩包
+assets/fonts/chill.zip

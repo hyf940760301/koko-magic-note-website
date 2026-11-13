@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Koko 的魔法手账</title>
+<link rel="icon" href="data:,">
+<style>
+@font-face{font-family:WenKai;src:url(assets/fonts/wenkai_proto.woff2) format('woff2');}
+@font-face{font-family:ChillRound;src:url(assets/fonts/chill_proto.woff2) format('woff2');}
+@font-face{font-family:NunitoP;src:url(assets/fonts/nunito_latin.woff2) format('woff2');font-weight:200 1000;}
+html,body{margin:0;height:100%;background:#F2D6B3;overflow:hidden}
+canvas{display:block;width:100%;height:100%;touch-action:none;user-select:none;-webkit-user-select:none}
+#loading{position:fixed;inset:0;z-index:20;background:#F2D6B3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;color:#8A5A40;font:15px/1.6 ChillRound,'PingFang SC',sans-serif;letter-spacing:.12em;transition:opacity .6s ease}
+#loading.gone{opacity:0;pointer-events:none}
+#loading i{width:46px;height:60px;border-radius:5px 9px 9px 5px;background:#E8845C;box-shadow:inset 6px 0 0 #FFF1DA,0 6px 14px rgba(201,128,90,.35);animation:bob 1.6s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-8px) rotate(3deg)}}
+#veil{position:fixed;inset:0;z-index:10;background:rgba(74,44,28,.5);opacity:0;transition:opacity .45s ease;cursor:zoom-out;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+#veil.on{opacity:1}
+#fly{position:fixed;left:0;top:0;z-index:11;transform-origin:50% 50%;transition:transform .6s cubic-bezier(.22,.9,.24,1);filter:drop-shadow(0 10px 22px rgba(60,30,14,.38));cursor:zoom-out;will-change:transform;user-select:none;-webkit-user-drag:none}
+#ui{position:fixed;left:12px;bottom:12px;font:12px/1.4 sans-serif;color:#5A3B2E;display:none}
+</style></head><body>
+<div id="loading"><i></i><span>正在把手账摆上桌…</span></div>
+<div id="ui"><input id="sl" type="range" min="0" max="1000" value="500" style="width:300px"></div>
+<script type="module" src="main.js"></script>
+</body></html>
