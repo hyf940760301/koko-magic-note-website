@@ -102,6 +102,7 @@ uniform float uTime; uniform vec2 uCookieOff; uniform float uCookieOn;
 varying vec3 vWP; varying vec3 vWN;
 float sdRoundBox(vec2 p, vec2 b, float r){ vec2 q=abs(p)-b+r; return length(max(q,0.0))+min(max(q.x,q.y),0.0)-r; }
 float hash12(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+float lodBias(vec2 uv){ vec2 dx=dFdx(uv), dy=dFdy(uv); float ax=length(dx), ay=length(dy); float an=max(ax,ay)/max(min(ax,ay),1e-5); return an>4.0 ? 0.0 : -0.35; }
 float pnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); return mix(mix(hash12(i),hash12(i+vec2(1.0,0.0)),f.x), mix(hash12(i+vec2(0.0,1.0)),hash12(i+vec2(1.0,1.0)),f.x), f.y); }
 uniform float uForm;
 // 纸面随朝向的连续明暗：风格化受光只有两阶，平缓的弧面（订口、翘角、翻起的纸）上看不出起伏，这里补一层
@@ -383,7 +384,7 @@ void main(){
   vec2 uv = vUv;
   vec2 cuv = front ? uv : vec2(1.0-uv.x, uv.y);
   vec3 c = paper(cuv);
-  vec4 ct = front ? texture2D(uFront, cuv, -0.35) : texture2D(uBack, cuv, -0.35);   // 负 LOD 偏置：斜视角小字也不发虚
+  vec4 ct = front ? texture2D(uFront, cuv, lodBias(cuv)) : texture2D(uBack, cuv, lodBias(cuv));   // 平放时保持小字锐利；纸卷成急弯、斜着看时改回正常采样，避免海报碎成格子
   float has = front ? uHasFront : uHasBack;
   ct *= has;
   float pm = (front ? texture2D(uMaskF, cuv).r : texture2D(uMaskB, cuv).r) * has;
@@ -577,11 +578,11 @@ function blockGeo(top, bulge = 0) { // 天头、地脚两个剖面 + 书口面�
   const bf = (x) => bulge * Math.pow(Math.min(Math.max(x / S.PW, 0), 1), 1.6);
   const sh = new THREE.Shape();
   sh.moveTo(0, S.B); const N = 72;
-  for (let i = 0; i <= N; i++) { const x = (i / N) * S.PW; sh.lineTo(x, top + prof(x) + bf(x) - 0.004); }
+  for (let i = 0; i <= N; i++) { const x = (i / N) * S.PW; sh.lineTo(x, top + prof(x) + bf(x) - 0.06); }
   sh.lineTo(S.PW, S.B); sh.lineTo(0, S.B);
   const head = new THREE.ShapeGeometry(sh); head.translate(0, 0, -S.PH / 2);
   const tail = new THREE.ShapeGeometry(sh); tail.translate(0, 0, S.PH / 2);
-  const fh = top + prof(S.PW) + bf(S.PW) - S.B;
+  const fh = top + prof(S.PW) + bf(S.PW) - S.B - 0.06;
   const rows = Math.max(8, Math.round(fh / 0.03)), cols = 72;
   const fore = new THREE.PlaneGeometry(S.PH, fh, cols, rows); fore.rotateY(Math.PI / 2); fore.translate(S.PW, S.B + fh / 2, 0);
   const p = fore.attributes.position;
@@ -698,7 +699,7 @@ function rebuildBlocks(tR, tL, closed = false) {
 // 翻页网格：CPU 逐帧积分（列方向弧长守恒），64×16
 const turnGeo = new THREE.PlaneGeometry(S.PW, S.PH, S.turnCols, S.turnRows);
 turnGeo.rotateX(-Math.PI / 2); turnGeo.translate(S.PW / 2, 0, 0);
-const turnMat = pageMat({}); turnMat.uniforms.uSpineAtU0.value = 1;
+const turnMat = pageMat({}); turnMat.uniforms.uSpineAtU0.value = 1; turnMat.polygonOffset = true; turnMat.polygonOffsetFactor = -2; turnMat.polygonOffsetUnits = -2;
 const turnPage = new THREE.Mesh(turnGeo, turnMat); turnPage.castShadow = turnPage.receiveShadow = true; book.add(turnPage);
 const flutter = []; // 开场翻飞页（空白纸）
 for (let i = 0; i < 9; i++) { const g = turnGeo.clone(); const m = new THREE.Mesh(g, pageMat({})); m.material.uniforms.uSpineAtU0.value = 1; m.castShadow = true; m.receiveShadow = true; m.visible = false; book.add(m); flutter.push(m); }
@@ -709,18 +710,22 @@ function curlPage(mesh, p, yR, yL, opts = {}) {
   const pos = mesh.geometry.attributes.position; const cols = S.turnCols + 1, rows = S.turnRows + 1; const du = S.PW / S.turnCols;
   const sp = p * p * (3 - 2 * p);
   const pivotY = yR + (yL - yR) * sp;
+  // 短卷：半径 3.2 厘米，最高只拱起一个直径（6.4）。纸贴着桌面翻过去，不会竖起来冲向镜头。
+  const R = 3.2, travel = S.PW + Math.PI * R, pp = Math.min(Math.max(p, 0), 1);
   let maxStretch = 0; const prevRow = [];
   for (let j = 0; j < rows; j++) {
     const v = j / (rows - 1); // 0 = 天头(-z)，1 = 地脚(+z)
     const vz = corner > 0 ? v : 1 - v;
-    const Le = lead * (1 - cone * 0.5 + cone * vz);
+    const s0 = S.PW - pp * travel - (vz - 0.5) * lead * S.PW * cone * Math.sin(Math.PI * pp);
     let x = 0, y = 0; const row = [];
     for (let i = 0; i < cols; i++) {
-      const u = i / (cols - 1);
-      let k = p * (1 + Le) - Le * (1 - u); k = Math.min(Math.max(k, 0), 1); const a = Math.PI * k * k * (3 - 2 * k);
-      if (i > 0) { const ua = (i - 0.5) / (cols - 1); let kk = p * (1 + Le) - Le * (1 - ua); kk = Math.min(Math.max(kk, 0), 1); const aa = Math.PI * kk * kk * (3 - 2 * kk); x += Math.cos(aa) * du; y += Math.sin(aa) * du; }
-      const flat = Math.pow(Math.abs(Math.cos(a)), 6);
-      const wy = pivotY + y + prof(x) * flat + (opts.lift || 0.012);
+      if (i > 0) { const th = Math.min(Math.PI, Math.max(0, ((i - 0.5) * du - s0) / R)); x += Math.cos(th) * du; y += Math.sin(th) * du; }
+      const th = Math.min(Math.PI, Math.max(0, (i * du - s0) / R));
+      const flat = Math.pow(Math.abs(Math.cos(th)), 6);
+      // 纸是单独的一张：可以卷起，但不能低于它正下方那叠纸的表面。0.06 厘米是这一页自己的厚度。
+      const ax = Math.min(Math.abs(x), S.PW);
+      const under = (x >= 0 ? yR : yL) + prof(ax);
+      const wy = Math.max(pivotY + y + prof(x) * flat + (opts.lift || 0), under + 0.06);
       const idx = j * cols + i; pos.setXYZ(idx, x, wy, -S.PH / 2 + v * S.PH); row.push([x, wy]);
     }
     if (j > 0) for (let i = 0; i < cols; i++) { const dx = row[i][0] - prevRow[i][0], dy = row[i][1] - prevRow[i][1]; const dz = S.PH / (rows - 1); const len = Math.sqrt(dx * dx + dy * dy + dz * dz); maxStretch = Math.max(maxStretch, Math.abs(len / dz - 1)); }
@@ -1065,14 +1070,23 @@ function poseRibbonClosed() { const z0 = S.CH / 2; layRibbon([new THREE.Vector3(
 function poseRibbonTitle(yTop = S.B + S.T) { ribbonGutter(yTop); }
 
 
+function loadProgress(p) {
+  const bar = document.querySelector('#loading em');
+  if (bar) bar.style.width = Math.min(100, Math.round(p * 100)) + '%';
+}
+const yieldFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 // ---------------- 页面内容 ----------------
 async function buildContent() {
+  loadProgress(0.04);
   await document.fonts.load('40px WenKai', '雪'); await document.fonts.load('40px ChillRound', '雪'); await document.fonts.load('40px NunitoP', 'Koko');
+  loadProgress(0.1); await yieldFrame();
   globalThis.__patchKScale = (matchMedia('(pointer: coarse)').matches || Q.get('patchK') === 'low') ? 0.72 : 1;
   PATCH = createPatchSystem({ THREE, S, makeMat, col, prof, book, maxAniso: MAX_ANISO });
-  pageRTs = await buildPages({ S, THREE, PAGE_RT_W, canvasLayer, makePageRT, renderPage, loadTex, loadImg, info, Q, PATCH, maxAniso: MAX_ANISO });
+  const pageMark = { snowL: 0.22, snowR: 0.32, nextL: 0.4, nextR: 0.48, cloudL: 0.55, cloudR: 0.6, seaL: 0.66, seaR: 0.7, starryL: 0.76, starryR: 0.8, creamL: 0.86, creamR: 0.9, title: 0.93 };
+  pageRTs = await buildPages({ S, THREE, PAGE_RT_W, canvasLayer, makePageRT, renderPage, loadTex, loadImg, info, Q, PATCH, maxAniso: MAX_ANISO, onPage: async (key) => { loadProgress(pageMark[key] || 0.8); await yieldFrame(); } });
   info.patches = Object.assign({}, PATCH.stats);
   DR = buildDress({ THREE, S, col, makeMat, book, frontPivot, yH, COVER, brassMat, mergeGeos }); await DR.loadPhoto();
+  loadProgress(0.92); await yieldFrame();
   uCover.uTitle.value = DR.makeTitleTex();
   sigTex = makeSignatureTex(); sigTexU.value = sigTex;
 }
@@ -1253,11 +1267,36 @@ if (Q.get('ui')) { ui.style.display = 'block'; sl.oninput = () => applyState({ s
 
 // ---------------- 正式运行用的接口（runtime.js 调用）：这里只管「摆姿态」和「画一帧」，流程与输入都在 runtime.js ----------------
 const LEAF = 0;                        // 每翻一张左右两叠的厚度变化：先固定为 0（两叠始终等高）。要做「越往后翻左边越厚」时改这里，并让翻页纸的转轴高度按左右分开算
-// 书里的纸，按顺序：f = 正面（在右叠时朝上的那面），b = 背面。后面的跨页做出来后往这里加
-const LEAVES = [{ f: 'title', b: 'snowL' }, { f: 'snowR', b: 'nextL' }, { f: 'nextR', b: null }];
+// 书里的纸，按顺序：f = 正面（在右叠时朝上的那面），b = 背面。只保留已做好的跨页，末尾不接白页
+const LEAVES = [
+  { f: 'title', b: 'snowL' },
+  { f: 'snowR', b: 'nextL' },
+  { f: 'nextR', b: 'cloudL' },
+  { f: 'cloudR', b: 'seaL' },
+  { f: 'seaR', b: 'starryL' },
+  { f: 'starryR', b: 'creamL' },
+  { f: 'creamR', b: null },
+];
 const tLof = (s) => F0 + s * LEAF, tRof = (s) => S.T - tLof(s);
 const leftOf = (s) => (s === 0 ? 'blank' : LEAVES[s - 1].b), rightOf = (s) => (LEAVES[s] ? LEAVES[s].f : 'blank');
-const FLY = { poster: 'assets/poster_snow03.jpg', kokoArt: 'assets/koko_cut_full.png' };   // 贴片 id → 点开后放大看的原图
+// 系列收纳口：页上露出封面，点开后可左右切换；idx 是当前封面下标
+const SERIES = {
+  snow: { name: '雪绒国', images: ['assets/poster_snow03.jpg', 'assets/Koko_snow_pastel_03_window_orange_title.jpg'], page: 'snowL', patch: 'poster', idx: 0 },
+  cloud: { name: '云朵午后', images: ['assets/Koko_poster_cloud_afternoon_01_lying_on_cloud_v3.jpg'], page: 'cloudR', patch: 'poster', idx: 0 },
+  sea: { name: '海上来信', images: ['assets/Koko_poster_sea_letter_01_window_gull_v3.jpg'], page: 'seaR', patch: 'poster', idx: 0 },
+  starry: { name: '星夜彩铅', images: ['assets/Koko_starry_01_round_collection.jpg'], page: 'starryR', patch: 'poster', idx: 0 },
+  cream: { name: '奶油素描', images: ['assets/Koko_cream_01_round_pegs.jpg'], page: 'creamR', patch: 'poster', idx: 0 },
+};
+const FLY_ONE = { kokoArt: 'assets/koko_cut_full.png' };   // 单张飞出（非系列收纳口）
+const seriesTexCache = {};
+async function ensureSeriesTex(url) {
+  if (seriesTexCache[url]) return seriesTexCache[url];
+  const t = await loadTex(url); t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; seriesTexCache[url] = t; return t;
+}
+function pocketOf(P) {
+  const sid = P && P.series; if (!sid || !SERIES[sid]) return null;
+  const S0 = SERIES[sid]; return { id: sid, name: S0.name, images: S0.images, idx: S0.idx, page: S0.page, patch: S0.patch };
+}
 const hitRay = new THREE.Raycaster(), hitNdc = new THREE.Vector2();
 const closedBox = new THREE.Box3(new THREE.Vector3(-0.8, 0, -S.CH / 2 - 0.6), new THREE.Vector3(S.CW + 2.4, 2 * S.B + S.T + S.bulge + 0.6, S.CH / 2 + 0.6));
 function setHitRay(cx, cy) { const r = renderer.domElement.getBoundingClientRect(); hitNdc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1); hitRay.setFromCamera(hitNdc, camera); }
@@ -1307,15 +1346,26 @@ const engine = {
   hitPlane(cx, cy, y) { setHitRay(cx, cy); const t = (y - hitRay.ray.origin.y) / hitRay.ray.direction.y; return t > 0 ? hitRay.ray.origin.clone().addScaledVector(hitRay.ray.direction, t) : null; },
   hitBook(cx, cy) { setHitRay(cx, cy); return hitRay.ray.intersectsBox(closedBox); },
   // —— 页面上的东西 ——
-  // 指针下面是哪一页的哪件东西；fly：点了会飞出来放大看的图
+  // 指针下面是哪一页的哪件东西；pocket：系列收纳口；fly：单张飞出
   pick(cx, cy, s) {
     for (const side of [1, -1]) { const key = side > 0 ? rightOf(s) : leftOf(s); if (!PATCH.pages[key]) continue;
       const h = this.hitPlane(cx, cy, S.B + (side > 0 ? tRof(s) : tLof(s)) + 0.1); if (!h) continue;
       const x = side > 0 ? h.x : h.x + S.PW, y = h.z + S.PH / 2; if (x < 0 || x > S.PW || y < 0 || y > S.PH) continue;
-      const P = PATCH.pick(key, x, y); if (P) return { key, P, fly: FLY[P.id] || null }; }
+      const P = PATCH.pick(key, x, y); if (!P) continue;
+      const pocket = pocketOf(P);
+      const fly = pocket ? pocket.images[pocket.idx] : (FLY_ONE[P.id] || null);
+      return { key, P, fly, pocket }; }
     return null;
   },
   pop(key, P, v, tilt) { PATCH.setPop(key, P, v, tilt); },
+  prop(key, id) { return PATCH.pages[key] && PATCH.pages[key].byId[id]; },
+  series: SERIES,
+  async setSeriesCover(sid, idx) {
+    const S0 = SERIES[sid]; if (!S0) return false;
+    const i = ((idx % S0.images.length) + S0.images.length) % S0.images.length;
+    S0.idx = i; const tex = await ensureSeriesTex(S0.images[i]);
+    return PATCH.setPosterMap(S0.page, S0.patch, tex);
+  },
   screenQuad(key, P) { const r = renderer.domElement.getBoundingClientRect();
     return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => { const v = PATCH.pointWorld(key, P, sx * P.hw, sy * P.hh).project(camera); return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (1 - (v.y * 0.5 + 0.5)) * r.height]; }); },
   // —— 画一帧 ——
@@ -1332,6 +1382,7 @@ const engine = {
 (async function init() {
   await buildContent();   // 签名不再是浮在纸上的一块透明片，改由内页材质直接画（见 pageMat）
   ROOM = buildRoom({ THREE, scene, VERT, FRAG_HEAD, shared, col, WIN, DESK, roundedRectShape });
+  loadProgress(0.96); await yieldFrame();
   // 预编译所有着色器（首帧不卡）
   poseOpen(0.5); renderer.compile(scene, camera);
   const st = { state: Q.get('state') || 'open', p: Q.get('p') ? parseFloat(Q.get('p')) : 0.5, ms: Q.get('ms') ? parseFloat(Q.get('ms')) : 0 };
@@ -1339,14 +1390,16 @@ const engine = {
     // 预热：把开场翻飞、每一张纸翻到一半的样子各画一帧——着色器编译、贴图和贴片上传显卡都在加载阶段做完，玩的时候第一次翻页不卡
     renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; frameBox(0, 0, OPEN_W(), S.CH + 2);
     poseClosed(); for (const ms of [1560, 2200, 3600]) { poseOpening(ms); renderer.shadowMap.needsUpdate = true; renderFrame(); }
+    loadProgress(0.98); await yieldFrame();
     for (let i = 0; i < LEAVES.length; i++) { engine.beginTurn(i); engine.updateTurn(i, 0.5); renderFrame(); }
     poseClosed(); renderFrame();
+    loadProgress(1);
     renderer.shadowMap.autoUpdate = false; window.__app = startRuntime(engine);
     // 画面稳定跑了几帧之后再把加载页淡出去
     { let n = 0; const go = () => { if (++n < 8) return requestAnimationFrame(go); const el = document.getElementById('loading'); if (el) { el.classList.add('gone'); setTimeout(() => el.remove(), 700); } }; requestAnimationFrame(go); }
   }
   else { applyState(st); const el = document.getElementById('loading'); if (el) el.remove(); }
-  window.__eng = { screenQuad: (k, P) => engine.screenQuad(k, P), patch: (k, id) => PATCH.pages[k].byId[id], turnBox: () => { const p = turnGeo.attributes.position; let y0=9,y1=-9; for(let i=0;i<p.count;i++){ const v=new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i)).project(camera); y0=Math.min(y0,v.y); y1=Math.max(y1,v.y); } return [y0,y1]; } };   // 自测用
+  window.__eng = { screenQuad: (k, P) => engine.screenQuad(k, P), patch: (k, id) => PATCH.pages[k].byId[id], turnBox: () => { const p = turnGeo.attributes.position; let y0=9,y1=-9; for(let i=0;i<p.count;i++){ const v=new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i)).project(camera); y0=Math.min(y0,v.y); y1=Math.max(y1,v.y); } return [y0,y1]; }, turnPeak: () => { const p = turnGeo.attributes.position; let m = 0; for (let i = 0; i < p.count; i++) m = Math.max(m, p.getY(i)); return m - (S.B + S.T * 0.5); } };   // 自测用
   window.__set = (o) => { applyState(o); return info; };
   window.__info = () => info;
   window.__sceneTris = () => { let t = 0; scene.traverse((o) => { if (o.isMesh && o.geometry.attributes.position) { const g = o.geometry; t += Math.round((g.index ? g.index.count : g.attributes.position.count) / 3); } }); return t; };

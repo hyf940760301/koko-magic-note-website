@@ -30,9 +30,10 @@ export async function buildPages(ctx) {
   const poster = await loadTex('assets/poster_snow03.jpg'); poster.generateMipmaps = true; poster.minFilter = THREE.LinearMipmapLinearFilter; poster.anisotropy = ctx.maxAniso;
   info.posterSize = [poster.image.width, poster.image.height];
   const kokoArt = await loadTex('assets/koko_cut_full.png'); kokoArt.premultiplyAlpha = true; kokoArt.anisotropy = ctx.maxAniso; kokoArt.generateMipmaps = true; kokoArt.minFilter = THREE.LinearMipmapLinearFilter;
+  const cream = await loadTex('assets/Koko_cream_01_round_pegs.jpg'); cream.generateMipmaps = true; cream.minFilter = THREE.LinearMipmapLinearFilter; cream.anisotropy = ctx.maxAniso;
   const kokoCut = await loadImg('assets/koko_diecut.png');
   const t0 = performance.now(); info.patchBuild = {};
-  const finish = (key, rec, layer) => { RT[key] = makePageRT(); renderPage(RT[key], [{ tex: layer, rect: [0, 0, S.PW, S.PH] }]); rec && rec.free(); layer.dispose(); layer.image.width = 1; layer.image.height = 1; };
+  const finish = async (key, rec, layer) => { RT[key] = makePageRT(); renderPage(RT[key], [{ tex: layer, rect: [0, 0, S.PW, S.PH] }]); rec && rec.free(); layer.dispose(); layer.image.width = 1; layer.image.height = 1; if (ctx.onPage) await ctx.onPage(key); };
   const ink = (bb, draw) => ({ bb, draw });
 
   // ================= 左页（第 17 页）：主照片 =================
@@ -46,12 +47,15 @@ export async function buildPages(ctx) {
       { id: 'gingham', sp: pk(200, () => item.torn(9.6, 13.2, '#EEF4FB', { pattern: 'gingham' })), cx: 7.6, cy: 9.4, rot: 5, z: 0.018, t: 0.018, lifts: [L.corner(1, -1, 0.07, 2.4)], side: SIDE.paper, mres: 30, ospace: 0.06 },
       { id: 'doily', g: 'soft', sp: pk(160, () => item.doily(2.3)), cx: 12.2, cy: 2.6, rot: 0, z: 0.022, floor: 0.022, cell: 0.2, shadowA: 0.3 },
       washi(0.9, 4.2, P.peach, 'stripes', 0.8, 0.85, 16.6, 4),
-      { id: 'ticket', sp: pk(320, () => item.ticket(4.8, 2.3, { title: '雪绒国 小火车', sub: '小窗站 → 邮局站', line: '靠窗 · 3 车 7 座', no: 'No.0017', band: P.snowDeep })), cx: 12.0, cy: 4.1, rot: 9, z: 0.050, t: 0.032, lifts: [L.edge('r', 0.10, 1.7)], side: SIDE.paper, mres: 60 },
+      { id: 'ticket', sp: pk(320, () => item.ticket(4.8, 2.3, { title: '雪绒国 小火车', sub: '小窗站 → 邮局站', line: '靠窗 · 3 车 7 座', no: 'No.0017', band: P.snowDeep })), cx: 12.15, cy: 3.55, rot: 8, z: 0.22, t: 0.032, side: SIDE.paper, mres: 60 },
+      // 两张雪景：页上露出封面，后面错开一条纸边，提示是一叠收纳口
+      { id: 'stack1', sp: pk(120, () => sprite(pw + 2 * border + 0.2, ph + 2 * border + 0.2, (q, w, h) => { q.fillStyle = '#F4E6D0'; rr(q, 0, 0, w, h, 0.1); q.fill(); })),
+        cx: pcx + 0.22, cy: pcy + 0.16, rot: posterRot + 1.5, z: 0.055, t: 0.03, side: SIDE.paper, mres: 14, cell: 0.55, noCast: true, noPick: true },
       { id: 'photo', sp: pk(160, () => sprite(pw + 2 * border, ph + 2 * border, (q, w, h) => { q.fillStyle = P.white; rr(q, 0, 0, w, h, 0.08); q.fill(); })), cx: pcx, cy: pcy, rot: posterRot, z: 0.080, t: 0.040, lifts: [L.arch(0.035)], side: SIDE.white, mres: 24, cell: 0.35 },
-      { id: 'poster', g: 'poster', on: 'photo', w: pw, h: ph, cx: pcx, cy: pcy, rot: posterRot, tex: poster, z: 0.2, cell: 0.35 },
+      { id: 'poster', g: 'poster', on: 'photo', w: pw, h: ph, cx: pcx, cy: pcy, rot: posterRot, tex: poster, z: 0.2, cell: 0.35, series: 'snow' },
       { id: 'dateTape', sp: pk(320, () => item.tapeLabel(6.6, 1.05, '十二月七日 · 晴转小雪', P.lilac)), cx: 4.9, cy: 1.55, rot: -1.5, z: 0.032, t: 0.015, side: SIDE.lilac, mres: 50, ospace: 0.05 },
       ...punches([[1.15, 5.4, 0.72, P.white, 10], [1.55, 9.6, 0.5, P.snowPale, 30], [0.95, 13.3, 0.62, P.white, 5], [13.55, 8.7, 0.56, P.white, 18], [13.25, 12.6, 0.44, P.snowPale, 40], [3.2, 16.5, 0.5, P.white, 22]]),
-      { id: 'tag', sp: pk(320, () => item.tag(2.3, 3.3, ['给', '小橘子'])), cx: 12.55, cy: 18.35, rot: 9, z: 0.105, t: 0.038, lifts: [L.edge('b', 0.15, 2.2)], side: SIDE.kraft, mres: 60 },
+      { id: 'tag', sp: pk(320, () => item.tag(2.3, 3.3, ['给', '小橘子'])), cx: 12.15, cy: 16.9, rot: 8, z: 0.16, t: 0.038, lifts: [L.edge('b', 0.05, 1.2)], side: SIDE.kraft, mres: 60 },
     ];
     // 四只蜂蜜色三角相角：真挤出的 3D 压角，高出相纸面
     const cs = 1.1, o = 0.12;
@@ -64,7 +68,7 @@ export async function buildPages(ctx) {
         const tt = 0.09; g.strokeStyle = 'rgba(255,240,205,0.85)'; g.lineWidth = 0.045; g.lineCap = 'round';
         g.beginPath(); g.moveTo(B[0] + tt * sx * 0.3, B[1] - tt * sy); g.lineTo(Cc[0] - tt * sx, Cc[1] + tt * sy * 0.3); g.stroke(); }));
       const [cx, cy] = childAt(pcx, pcy, posterRot, (x0 + x1) / 2, (y0 + y1) / 2);
-      ps.push({ id: 'corner' + sx + sy, sp, cx, cy, rot: posterRot, z: 0.145, t: 0.045, side: SIDE.honey, mres: 90, ospace: 0.04, cell: 0.15 });
+      ps.push({ id: 'corner' + sx + sy, sp, cx, cy, rot: posterRot, z: 0.145, t: 0.045, side: SIDE.honey, mres: 90, ospace: 0.04, cell: 0.15, press: true });
     }
     // 吊牌棉绳：从订口探出 → 绕到吊牌圆孔 → 穿孔到吊牌背面 → 绕过顶边回到正面打个结
     const twine = { type: 'twine', kind: 1, r: 0.036, radial: 10, pts: (topAt, byId) => {
@@ -84,7 +88,7 @@ export async function buildPages(ctx) {
       g.strokeStyle = P.ink; g.lineWidth = 0.05; g.beginPath(); g.arc(1.5, 19.7, 0.42, 0, 7); g.stroke(); print(g, '17', 1.5, 19.85, 0.42, P.ink, 'NunitoP', 'center');
       rec.paintBase(g, k);
     });
-    finish('snowL', rec, L0);
+    await finish('snowL', rec, L0);
   }
 
   // ================= 右页（第 18 页）：信封与模切贴纸 =================
@@ -98,17 +102,17 @@ export async function buildPages(ctx) {
       { id: 'receipt', sp: pk(320, () => item.receipt(2.9, 4.3, ['雪人小馆', ['烤橘子', '×1'], ['热可可', '×1'], ['棉花糖', '×2']], ['合计', '¥ 5'])), cx: 2.95, cy: 13.2, rot: 4, z: 0.045, t: 0.018, lifts: [L.edge('b', 0.11, 1.6, 0.55, 1.5)], side: SIDE.paper, mres: 80, ospace: 0.035, osmooth: 1, cell: 0.2 },
       ...envelope3D(E, 10.95, 4.3, 4, 0.085, 0.12, 'env'),
       washi(2.2, 0.75, P.kraft, 'grid', 0.82, 7.85, 2.05, -38),
-      { id: 'vellum', g: 'soft', sp: pk(280, () => item.vellum(4.7, 2.7, ['雪落下来的时候，', '是沙沙的。'])), cx: 11.05, cy: 7.75, rot: -4, z: 0.148, floor: 0.148, cell: 0.14, shadowA: 0.28, bridgeR: 0.3 },
+      { id: 'vellum', g: 'soft', sp: pk(280, () => item.vellum(4.7, 2.7, ['雪落下来的时候，', '是沙沙的。'])), cx: 11.15, cy: 8.55, rot: -4, z: 0.16, floor: 0.16, cell: 0.14, shadowA: 0.28, bridgeR: 0.3 },
       { id: 'orangeS', sp: pk(300, () => item.orangeSticker(0.95)), cx: 2.5, cy: 10.1, rot: -6, z: 0.100, t: 0.048, lifts: [L.edge('r', 0.06, 0.9)], side: SIDE.white, mres: 70, ospace: 0.05, cell: 0.15 },
       { id: 'todo', sp: pk(320, () => item.checklist(4.4, 3.2, '今天要做的事', [['看雪', true], ['烤橘子', true], ['去寄信', false]])), cx: 3.35, cy: 17.85, rot: -3, z: 0.062, t: 0.032, lifts: [L.corner(1, 1, 0.12, 1.9)], side: SIDE.paper, mres: 50 },
-      { id: 'stamp', sp: pk(320, () => item.stamp(1.6, 1.95, 'orange', '8分')), cx: 5.6, cy: 15.85, rot: 6, z: 0.095, t: 0.025, side: SIDE.white, mres: 100, ospace: 0.03, osmooth: 1, cell: 0.15 },
+      { id: 'stamp', sp: pk(320, () => item.stamp(1.6, 1.95, 'orange', '8分')), cx: 4.35, cy: 17.35, rot: 7, z: 0.2, t: 0.025, side: SIDE.white, mres: 100, ospace: 0.03, osmooth: 1, cell: 0.15 },
       washi(2.3, 0.7, 'rgba(168,220,200,1)', 'dots', 0.78, 5.8, 14.98, 9),
       { id: 'koko', sp: pk(260, () => sprite(KS, KS, (q) => { q.imageSmoothingEnabled = true; q.imageSmoothingQuality = 'high'; q.drawImage(kokoCut, 0, 0, KS, KS); })), cx: kx, cy: ky, rot: kRot, z: 0.120, t: 0.065,
         lifts: [L.dome(0.028, KS * 0.46), L.corner(1, 1, 0.06, 2.4)], side: 0xFFFDF6, mres: 40, outlineN: 64, osmooth: 3, cell: 0.25 },
       { id: 'kokoArt', g: 'poster', on: 'koko', w: KS - 2 * inset, h: KS - 2 * inset, cx: kx, cy: ky, rot: kRot, tex: kokoArt, premul: true, z: 0.3, cell: 0.25 },
       ...punches([[6.6, 2.35, 0.55, P.white, 8], [1.35, 9.95, 0.42, P.snowPale, 20], [6.2, 15.9, 0.5, P.white, 33], [14.0, 9.9, 0.38, P.white, 2], [6.3, 10.0, 0.34, P.snowPale, 14]]),
     ];
-    const clip = { type: 'clip', target: 'vellum', cx: 12.75, cy: 6.75, rot: -6, len: 2.6, r: 0.034, kind: 0, radial: 10 };
+    const clip = { type: 'clip', target: 'vellum', cx: 12.55, cy: 8.15, rot: -8, len: 2.6, r: 0.034, kind: 0, radial: 10 };
     const inks = [ink([1.5, 4.6, 9.4, 9.3], (g) => { // 日记（Koko 的口吻）写在撕下来的方格纸上
       ['今天的雪软软的，', '我在小窗里烤了一个橘子。', '橘子皮的香味，圆圆的。', '等雪停了，要去寄信。'].forEach((s, i) => hand(g, s, 1.8, 5.75 + i * 0.95, 0.52, P.ink));
       doodle.circle(g, 5.55, 7.47, 1.05, 0.42, -0.05); doodle.underline(g, 4.45, 7.0, 8.82);
@@ -126,7 +130,7 @@ export async function buildPages(ctx) {
       g.strokeStyle = P.ink; g.lineWidth = 0.05; g.beginPath(); g.arc(S.PW - 1.5, 19.7, 0.42, 0, 7); g.stroke(); print(g, '18', S.PW - 1.5, 19.85, 0.42, P.ink, 'NunitoP', 'center');
       rec.paintBase(g, k);
     });
-    finish('snowR', rec, R0);
+    await finish('snowR', rec, R0);
   }
 
   // ================= 第 19 页（翻页的背面）：雪绒国 · 续 =================
@@ -161,7 +165,7 @@ export async function buildPages(ctx) {
       g.strokeStyle = P.ink; g.lineWidth = 0.05; g.beginPath(); g.arc(1.5, 19.95, 0.38, 0, 7); g.stroke(); print(g, '19', 1.5, 20.09, 0.38, P.ink, 'NunitoP', 'center');
       rec.paintBase(g, k);
     });
-    finish('nextL', rec, B19);
+    await finish('nextL', rec, B19);
   }
 
   // ================= 第 20 页（翻页时露出）：给自己的信 =================
@@ -179,11 +183,12 @@ export async function buildPages(ctx) {
       { id: 'gingham', sp: pk(200, () => item.torn(11.0, 12.8, '#EEF4FB', { pattern: 'gingham' })), cx: 8.3, cy: 10.1, rot: 3, z: 0.020, t: 0.018, side: SIDE.paper, mres: 30, ospace: 0.06 },
       { id: 'letter', sp: letter, cx: 7.6, cy: 9.6, rot: -1.5, z: 0.062, t: 0.028, lifts: [L.corner(1, -1, 0.15, 3.0), L.corner(-1, 1, 0.15, 3.0)], side: SIDE.paper, mres: 30, cell: 0.28 },
       washi(2.4, 0.75, P.snow, 'snow', 0.8, 3.0, 3.55, -20), washi(2.4, 0.75, P.snow, 'snow', 0.8, 12.3, 3.35, 22),
-      { id: 'stamp', sp: pk(320, () => item.stamp(1.5, 1.8, 'house', '8分')), cx: 12.6, cy: 3.9, rot: 7, z: 0.095, t: 0.025, conform: true, side: SIDE.white, mres: 100, ospace: 0.03, osmooth: 1, cell: 0.12 },
+      { id: 'stamp', sp: pk(320, () => item.stamp(1.5, 1.8, 'house', '8分')), cx: 12.6, cy: 3.9, rot: 7, z: 0.095, t: 0.025, side: SIDE.white, mres: 100, ospace: 0.03, osmooth: 1, cell: 0.12 },
       { id: 'tag', sp: pk(320, () => item.tag(2.0, 2.9, ['回信', '寄小窗'])), cx: 1.75, cy: 16.9, rot: -8, z: 0.065, t: 0.038, lifts: [L.corner(-1, 1, 0.12, 1.6)], side: SIDE.kraft, mres: 60 },
       { id: 'ticket', sp: pk(320, () => item.ticket(4.2, 1.9, { title: '小窗站', sub: '一日票', line: '可以坐好多次', no: 'No.0001', band: P.snow })), cx: 5.4, cy: 17.5, rot: -6, z: 0.085, t: 0.030, lifts: [L.corner(1, -1, 0.10, 1.4)], side: SIDE.paper, mres: 60 },
       ...envelope3D(E, 10.75, 17.75, 5, 0.095, 0.11, 'env'),
-      { id: 'orangeS', sp: pk(300, () => item.orangeSticker(0.7)), cx: 11.0, cy: 18.25, rot: 10, z: 0.165, t: 0.048, conform: true, side: SIDE.white, mres: 80, ospace: 0.04, cell: 0.12 },
+      // 橘子贴纸落在信纸空白处，不压信封；靠 baseAt 承托，不用 conform
+      { id: 'orangeS', sp: pk(300, () => item.orangeSticker(0.7)), cx: 3.4, cy: 14.2, rot: 8, z: 0.22, t: 0.048, side: SIDE.white, mres: 80, ospace: 0.04, cell: 0.12, restOn: ['letter'] },
       ...punches([[13.7, 10.6, 0.45, P.snowPale, 4], [1.25, 11.6, 0.45, P.snowPale, 22], [8.6, 18.9, 0.42, P.snowPale, 9]]),
     ];
     const clip = { type: 'clip', target: 'letter', cx: 12.5, cy: 7.4, rot: 92, len: 2.6, r: 0.034, kind: 0, radial: 10 };
@@ -196,9 +201,77 @@ export async function buildPages(ctx) {
       g.strokeStyle = P.ink; g.lineWidth = 0.05; g.beginPath(); g.arc(S.PW - 1.5, 19.95, 0.38, 0, 7); g.stroke(); print(g, '20', S.PW - 1.5, 20.09, 0.38, P.ink, 'NunitoP', 'center');
       rec.paintBase(g, k);
     });
-    finish('nextR', rec, B20);
+    await finish('nextR', rec, B20);
   }
   RT.snowR2 = RT.snowR;
+
+  // 简单跨页：左日记 + 右主照片收纳口（物件互不重叠）
+  async function seriesSpread(opts) {
+    const { keyL, keyR, no, title, lines, note, tex, pageNoL, pageNoR, ticketTitle, ticketSub, washiColor, accent } = opts;
+    seed(no);
+    {
+      const rec = PATCH.buildPage(keyL, { patches: [
+        washi(3.4, 0.72, washiColor || P.peach, 'dots', 0.82, 7.4, 2.9, -2, { floor: 0.004 }),
+        { id: 'ticket', sp: pk(300, () => item.ticket(4.6, 2.1, { title: ticketTitle || title, sub: ticketSub || '今天', line: '收好这一页', no: 'No.00' + String(no).padStart(2, '0'), band: accent || P.coral })), cx: 4.2, cy: 16.6, rot: -5, z: 0.08, t: 0.03, side: SIDE.paper, mres: 55 },
+        { id: 'stamp', sp: pk(300, () => item.stamp(1.5, 1.8, 'orange', '8分')), cx: 12.4, cy: 16.8, rot: 6, z: 0.1, t: 0.025, side: SIDE.white, mres: 90, ospace: 0.03, cell: 0.14 },
+      ], withK });
+      const Lpg = canvasLayer((g, k) => {
+        print(g, title, 1.8, 5.0, 1.05, P.ink, 'ChillRound');
+        print(g, 'No.' + no, 1.85, 5.9, 0.36, P.inkBlue, 'NunitoP');
+        lines.forEach((s, i) => hand(g, s, 1.9, 7.4 + i * 0.95, 0.5, P.ink));
+        if (note) hand(g, note, 1.9, 18.6, 0.42, P.inkBlue);
+        g.strokeStyle = P.ink; g.lineWidth = 0.05; g.beginPath(); g.arc(1.5, 19.7, 0.42, 0, 7); g.stroke();
+        print(g, String(pageNoL), 1.5, 19.85, 0.42, P.ink, 'NunitoP', 'center');
+        rec.paintBase(g, k);
+      });
+      await finish(keyL, rec, Lpg);
+    }
+    seed(no + 100);
+    {
+      const img = tex.image || tex; const iw = img.width || 1, ih = img.height || 1;
+      const ph = 13.2, pw = Math.min(11.4, ph * iw / ih), border = pw * 0.025;
+      const cx = S.PW / 2, cy = 9.4, rot = -1.5;
+      const ps = [];
+      // 多张时露出后面错开的纸边，提示这是一叠收纳口
+      if ((opts.stack || 0) > 1) {
+        for (let i = (opts.stack || 1) - 1; i >= 1; i--) {
+          const ox = 0.18 * i, oy = 0.14 * i;
+          ps.push({ id: 'stack' + i, sp: pk(120, () => sprite(pw + 2 * border + 0.15, ph + 2 * border + 0.15, (q, w, h) => { q.fillStyle = i % 2 ? '#FFF8EE' : '#F4E6D0'; rr(q, 0, 0, w, h, 0.1); q.fill(); })),
+            cx: cx + ox, cy: cy + oy, rot: rot + i * 1.2, z: 0.04 + i * 0.012, t: 0.03, side: SIDE.paper, mres: 14, cell: 0.55, noCast: true, noPick: true });
+        }
+      }
+      ps.push(
+        { id: 'photo', sp: pk(140, () => sprite(pw + 2 * border, ph + 2 * border, (q, w, h) => { q.fillStyle = '#FFFDF8'; rr(q, 0, 0, w, h, 0.1); q.fill(); })), cx, cy, rot, z: 0.08, t: 0.04, lifts: [L.arch(0.03)], side: SIDE.white, mres: 18, cell: 0.4 },
+        { id: 'poster', g: 'poster', on: 'photo', w: pw, h: ph, cx, cy, rot, tex, z: 0.2, cell: 0.4, series: opts.series },
+      );
+      const cs = 1.0, o = 0.1;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        const x = sx * (pw / 2 + border), y = sy * (ph / 2 + border);
+        const A = [x + o * sx, y + o * sy], B = [x - cs * sx, y + o * sy], Cc = [x + o * sx, y - cs * sy];
+        const x0 = Math.min(A[0], B[0], Cc[0]) - 0.08, x1 = Math.max(A[0], B[0], Cc[0]) + 0.08, y0 = Math.min(A[1], B[1], Cc[1]) - 0.08, y1 = Math.max(A[1], B[1], Cc[1]) + 0.08;
+        const sp = pk(200, () => sprite(x1 - x0, y1 - y0, (g) => { g.translate(-x0, -y0); g.fillStyle = P.honey; g.beginPath(); g.moveTo(...A); g.lineTo(...B); g.lineTo(...Cc); g.closePath(); g.fill(); }));
+        const [px, py] = childAt(cx, cy, rot, (x0 + x1) / 2, (y0 + y1) / 2);
+        ps.push({ id: 'corner' + sx + sy, sp, cx: px, cy: py, rot, z: 0.145, t: 0.045, side: SIDE.honey, mres: 80, ospace: 0.04, cell: 0.15, press: true });
+      }
+      const rec = PATCH.buildPage(keyR, { patches: ps, withK });
+      const Rpg = canvasLayer((g, k) => {
+        hand(g, '点开看这一组。', 1.7, 18.5, 0.45, P.inkBlue);
+        g.strokeStyle = P.ink; g.lineWidth = 0.05; g.beginPath(); g.arc(S.PW - 1.5, 19.7, 0.42, 0, 7); g.stroke();
+        print(g, String(pageNoR), S.PW - 1.5, 19.85, 0.42, P.ink, 'NunitoP', 'center');
+        rec.paintBase(g, k);
+      });
+      await finish(keyR, rec, Rpg);
+    }
+  }
+
+  const cloud = await loadTex('assets/Koko_poster_cloud_afternoon_01_lying_on_cloud_v3.jpg'); cloud.generateMipmaps = true; cloud.minFilter = THREE.LinearMipmapLinearFilter; cloud.anisotropy = ctx.maxAniso;
+  const sea = await loadTex('assets/Koko_poster_sea_letter_01_window_gull_v3.jpg'); sea.generateMipmaps = true; sea.minFilter = THREE.LinearMipmapLinearFilter; sea.anisotropy = ctx.maxAniso;
+  const starry = await loadTex('assets/Koko_starry_01_round_collection.jpg'); starry.generateMipmaps = true; starry.minFilter = THREE.LinearMipmapLinearFilter; starry.anisotropy = ctx.maxAniso;
+  // cream 已在上面加载
+  await seriesSpread({ keyL: 'cloudL', keyR: 'cloudR', no: 4, title: '云朵午后', lines: ['云好软软的。', '我躺在上面。', '风轻轻的。'], note: '想再躺一会儿。', tex: cloud, pageNoL: 21, pageNoR: 22, ticketTitle: '云朵午后', ticketSub: '躺一躺', washiColor: P.peach, accent: P.coral, series: 'cloud', stack: 1 });
+  await seriesSpread({ keyL: 'seaL', keyR: 'seaR', no: 6, title: '海上来信', lines: ['窗开着。', '海风进来了。', '信还在桌上。'], note: '等海鸥回来。', tex: sea, pageNoL: 23, pageNoR: 24, ticketTitle: '海上来信', ticketSub: '窗边', washiColor: P.snow, accent: P.snowDeep, series: 'sea', stack: 1 });
+  await seriesSpread({ keyL: 'starryL', keyR: 'starryR', no: 9, title: '星夜彩铅', lines: ['星都画下来。', '一颗一颗的。', '今晚好亮。'], note: '收进这一页。', tex: starry, pageNoL: 25, pageNoR: 26, ticketTitle: '星夜彩铅', ticketSub: '彩铅', washiColor: P.lilac, accent: P.lilac, series: 'starry', stack: 1 });
+  await seriesSpread({ keyL: 'creamL', keyR: 'creamR', no: 10, title: '奶油素描', lines: ['挂钩挂好了。', '奶油色的。', '摸起来软。'], note: '喜欢这一页。', tex: cream, pageNoL: 27, pageNoR: 28, ticketTitle: '奶油素描', ticketSub: '挂钩', washiColor: P.peach, accent: P.coral, series: 'cream', stack: 1 });
 
   // ================= 扉页 =================
   seed(1);
@@ -210,7 +283,7 @@ export async function buildPages(ctx) {
       doodle.star(g, 3.0, 5.4, 0.22); doodle.star(g, 11.9, 6.3, 0.16); doodle.snowflake(g, 11.6, 16.8, 0.26);
       rec.paintBase(g, k);
     });
-    finish('title', rec, title);
+    await finish('title', rec, title);
   }
   setK(kPage);
   info.patchBuild.ms = Math.round(performance.now() - t0);

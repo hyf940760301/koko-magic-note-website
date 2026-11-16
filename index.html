@@ -12,13 +12,23 @@ canvas{display:block;width:100%;height:100%;touch-action:none;user-select:none;-
 #loading{position:fixed;inset:0;z-index:20;background:#F2D6B3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;color:#8A5A40;font:15px/1.6 ChillRound,'PingFang SC',sans-serif;letter-spacing:.12em;transition:opacity .6s ease}
 #loading.gone{opacity:0;pointer-events:none}
 #loading i{width:46px;height:60px;border-radius:5px 9px 9px 5px;background:#E8845C;box-shadow:inset 6px 0 0 #FFF1DA,0 6px 14px rgba(201,128,90,.35);animation:bob 1.6s ease-in-out infinite}
+#loading b{display:block;width:196px;height:7px;border-radius:99px;background:rgba(255,241,218,.85);box-shadow:inset 0 0 0 1px rgba(201,128,90,.28);overflow:hidden}
+#loading em{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#F0A07C,#E8845C);transition:width .45s cubic-bezier(.22,.8,.24,1)}
 @keyframes bob{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-8px) rotate(3deg)}}
 #veil{position:fixed;inset:0;z-index:10;background:rgba(74,44,28,.5);opacity:0;transition:opacity .45s ease;cursor:zoom-out;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 #veil.on{opacity:1}
-#fly{position:fixed;left:0;top:0;z-index:11;transform-origin:50% 50%;transition:transform .6s cubic-bezier(.22,.9,.24,1);filter:drop-shadow(0 10px 22px rgba(60,30,14,.38));cursor:zoom-out;will-change:transform;user-select:none;-webkit-user-drag:none}
+#flybox{position:fixed;inset:0;z-index:11;pointer-events:none;opacity:0;transition:opacity .45s ease}
+#flybox.on{opacity:1}
+#fly{position:fixed;left:0;top:0;z-index:12;transform-origin:50% 50%;transition:transform .6s cubic-bezier(.22,.9,.24,1),opacity .28s ease;filter:drop-shadow(0 10px 22px rgba(60,30,14,.38));cursor:zoom-out;will-change:transform;user-select:none;-webkit-user-drag:none;pointer-events:auto}
+.fly-nav{position:fixed;top:50%;z-index:13;width:44px;height:44px;margin-top:-22px;border:0;border-radius:50%;background:rgba(255,248,238,.92);color:#8A5A40;font:700 28px/1 ChillRound,sans-serif;box-shadow:0 4px 14px rgba(60,30,14,.28);cursor:pointer;pointer-events:auto}
+.fly-nav.prev{left:max(18px,4vw)}.fly-nav.next{right:max(18px,4vw)}
+.fly-nav:active{transform:scale(.96)}
+.fly-dots{position:fixed;left:50%;bottom:max(22px,4vh);z-index:13;display:flex;gap:8px;transform:translateX(-50%);pointer-events:none}
+.fly-dots i{width:8px;height:8px;border-radius:50%;background:rgba(255,248,238,.45);display:block}
+.fly-dots i.on{background:#FFF8EE;box-shadow:0 0 0 2px rgba(232,132,92,.55)}
 #ui{position:fixed;left:12px;bottom:12px;font:12px/1.4 sans-serif;color:#5A3B2E;display:none}
 </style></head><body>
-<div id="loading"><i></i><span>正在把手账摆上桌…</span></div>
+<div id="loading"><i></i><span>正在把手账放到桌子上</span><b><em></em></b></div>
 <div id="ui"><input id="sl" type="range" min="0" max="1000" value="500" style="width:300px"></div>
 <script type="module" src="main.js"></script>
 </body></html>

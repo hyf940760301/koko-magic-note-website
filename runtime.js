@@ -21,11 +21,14 @@ export function startRuntime(E) {
   const par = { x: 0, y: 0 };                                  // 首屏指针视差（慢半拍）
   const clasp = { s: 1, sv: 0, lift: 0, lv: 0, nextWiggle: 4.5, hover: false };
   const open = { ms: 0, speed: 1, from: null };
+  let dolly = 0, dollySpeed = 1, openAfter = false;
+  const DOLLY_SEC = 6.2;
   const stat = { dt: 16.7, slow: 0, frames: 0, cpu: 0, cpuMax: 0 };
   let shadowHold = 3;                    // 进入新状态后的头几帧一定重画影子图
 
   // ---------- 小工具 ----------
   const smooth = (t) => { t = E.clamp01(t); return t * t * (3 - 2 * t); };
+  const smoother = (t) => { t = E.clamp01(t); return t * t * t * (t * (t * 6 - 15) + 10); };
   function stepSpring(o, key, vkey, target, sp, dt) { // 固定步长积分，帧率高低手感一致
     let n = Math.max(1, Math.ceil(dt / (1 / 240))); const h = dt / n;
     while (n--) { const a = -sp.k * (o[key] - target) - sp.c * o[vkey]; o[vkey] += a * h; o[key] += o[vkey] * h; }
@@ -39,9 +42,11 @@ export function startRuntime(E) {
   const setCursor = (c) => { if (canvas.style.cursor !== c) canvas.style.cursor = c; };
 
   // ---------- 合上（首屏） ----------
-  function enterCover() { clearPops(); mode = 'cover'; modeT = 0; turn = null; queue = []; E.poseCover(); shadowHold = 3; }
-  function coverPose() { const C = E.camPoses(); return E.lerpPose(C.est0, C.est1, smooth((modeT - 0.6) / 9)); }
+  function enterCover() { clearPops(); mode = 'cover'; modeT = 0; dolly = 0; dollySpeed = 1; openAfter = false; turn = null; queue = []; E.poseCover(); shadowHold = 3; }
+  function coverPose() { const C = E.camPoses(); return E.lerpPose(C.est0, C.est1, smoother(dolly)); }
   function frameCover(dt) {
+    dolly = Math.min(1, dolly + dt * dollySpeed / DOLLY_SEC);
+    if (dolly >= 1 && openAfter) { startOpening(); return { dust: 1, shadows: true }; }
     clasp.hover = ptr.inside && E.hitBook(ptr.cx, ptr.cy); setCursor(clasp.hover ? 'pointer' : 'default');
     stepSpring(clasp, 's', 'sv', clasp.hover ? 1.04 : 1, SPRING.hover, dt);
     // 每隔几秒搭扣自己轻轻翘一下，提示可以点
@@ -54,14 +59,19 @@ export function startRuntime(E) {
   }
   function startOpening() {
     if (mode !== 'cover') return;
-    open.from = sway(coverPose()); open.ms = OPEN_FROM; open.speed = 1; mode = 'opening'; modeT = 0; setCursor('default');
+    open.from = sway(coverPose()); open.ms = OPEN_FROM; open.speed = openAfter ? Math.max(open.speed, 2.4) : 1; openAfter = false; mode = 'opening'; modeT = 0; setCursor('default');
   }
-  function skipOpening() { if (mode === 'opening' && open.speed === 1) open.speed = Math.max(1, (OPEN_END - open.ms) / 300); }
+  // 等不及：同一条镜头和开书过程接着播，只是更快。最快约 3 倍，不会把剩余动画压进一瞬间。
+  function hurryIntro() {
+    if (mode === 'cover') { dollySpeed = Math.min(3, dollySpeed + 1.15); return; }
+    if (mode === 'opening') open.speed = Math.min(2.8, open.speed + 0.85);
+  }
+  function skipOpening() { if (mode === 'opening') open.speed = Math.max(open.speed, 2.8); }
   function frameOpening(dt) {
     open.ms = Math.min(OPEN_END, open.ms + dt * 1000 * open.speed);
     E.poseOpening(open.ms);
     const u = E.clamp01((open.ms - OPEN_FROM) / (TL.popStart - OPEN_FROM)); E.claspBtn(1 + (clasp.s - 1) * (1 - u), 0.03 * Math.sin(Math.PI * u));
-    const t = E.ease((open.ms - TL.camStart) / (TL.camEnd - TL.camStart)); const C = E.camPoses();
+    const t = smoother((open.ms - TL.camStart) / (TL.camEnd - TL.camStart)); const C = E.camPoses();
     E.setCam(E.lerpPose(open.from, C.read, t), new THREE.Vector3(S.CW / 2 * (1 - t), 2.5 - 0.5 * t, 0));
     E.setRead(t);
     if (open.ms >= OPEN_END) enterRead(0);
@@ -70,16 +80,15 @@ export function startRuntime(E) {
 
   // ---------- 阅读与翻页 ----------
   function enterRead(s) { E.setRead(1); mode = 'read'; modeT = 0; spread = s; turn = null; queue = []; idleT = 0; E.poseSpread(s); shadowHold = 3; }
-  // 翻页区：页面外侧 3.5 厘米的整条，或书口两角半径 4.5 的四分之一圆；返回 { side: 1 右页 / -1 左页, corner, x }
+  // 整页都能抓住。side：1 右页往后翻，-1 左页往前翻。inCorner 只用于没按下时的书角提示。
   function zoneAt(cx, cy) {
     const Y = E.pageY(spread);
     for (const side of [1, -1]) {
       const h = E.hitPlane(cx, cy, side > 0 ? Y.r : Y.l); if (!h) continue;
-      const x = h.x * side, z = h.z;                           // x：离书脊的距离
-      if (x < 0 || x > S.PW + 1.0 || Math.abs(z) > S.PH / 2 + 0.8) continue;
+      const x = h.x * side, z = h.z;
+      if (x < -0.3 || x > S.PW + 0.8 || Math.abs(z) > S.PH / 2 + 0.5) continue;
       const dc = Math.hypot(S.PW - x, S.PH / 2 - Math.abs(z));
-      const inCorner = dc < TURN.corner, inEdge = x > S.PW - TURN.edge;
-      if (inCorner || inEdge) return { side, corner: z > 0 ? 1 : -1, x, inCorner };
+      return { side, corner: z > 0 ? 1 : -1, x, z, inCorner: x > S.PW - TURN.edge && dc < TURN.corner };
     }
     return null;
   }
@@ -146,10 +155,21 @@ export function startRuntime(E) {
   function popOf(pk) { let o = pops.get(pk.P); if (!o) { o = { key: pk.key, P: pk.P, v: 0, vel: 0, target: 0, tilt: 0, tv: 0 }; pops.set(pk.P, o); } return o; }
   function setHover(pk) {
     const P = pk ? (pk.P.on || pk.P) : null; if (P === hoverP) return;
-    if (hoverP && pops.get(hoverP)) pops.get(hoverP).target = 0;
-    hoverP = P; if (pk) popOf({ key: pk.key, P }).target = 0.07;
+    if (hoverP && pops.get(hoverP) && pops.get(hoverP).target < 0.2) pops.get(hoverP).target = 0;
+    hoverP = P; if (pk) { const o = popOf({ key: pk.key, P }); if (o.target < 0.2) o.target = 0.07; }
   }
-  function pokeItem(pk) { const o = popOf({ key: pk.key, P: pk.P.on || pk.P }); o.vel += 3.2; o.tv += (Math.random() < 0.5 ? -1 : 1) * 5; }
+  function pokeItem(pk) { const o = popOf({ key: pk.key, P: pk.P.on || pk.P }); if (o.target > 0.2) return; o.vel += 3.2; o.tv += (Math.random() < 0.5 ? -1 : 1) * 5; }
+  function toggleHold(pk) {
+    const id = pk.P.id || '';
+    const names = id.startsWith('env') ? ['env_back', 'env_front', 'env_card'] : [id];
+    const up = !(popOf(pk).target > 0.2);
+    for (const name of names) {
+      const P = E.prop(pk.key, name); if (!P) continue;
+      const o = popOf({ key: pk.key, P });
+      o.target = up ? (name === 'env_card' ? 1.15 : 0.62) : 0;
+      if (up) o.vel += 1.4;
+    }
+  }
   function stepPops(dt) {
     let any = false;
     for (const o of pops.values()) {
@@ -162,77 +182,135 @@ export function startRuntime(E) {
     return any;
   }
   function clearPops() { for (const o of pops.values()) E.pop(o.key, o.P, 0, 0); pops.clear(); hoverP = null; }
-  // 放大看：一张普通图片从它在书页上的位置飞到屏幕中间，再点一下飞回去
+  // 收纳口 / 单张放大：从书页位置飞到画面中间；多张时可左右切换，收回后页上露出当前这张
   let fly = null;
   function openFly(pk) {
     if (fly) return; const q = E.screenQuad(pk.key, pk.P);
     const w = Math.hypot(q[1][0] - q[0][0], q[1][1] - q[0][1]), h = Math.hypot(q[3][0] - q[0][0], q[3][1] - q[0][1]);
     const cx = (q[0][0] + q[2][0]) / 2, cy = (q[0][1] + q[2][1]) / 2, ang = Math.atan2(q[1][1] - q[0][1], q[1][0] - q[0][0]);
-    const veil = document.createElement('div'); veil.id = 'veil'; const img = new Image(); img.id = 'fly'; img.src = pk.fly; img.draggable = false;
+    const images = pk.pocket ? pk.pocket.images.slice() : [pk.fly];
+    const idx0 = pk.pocket ? pk.pocket.idx : 0;
+    const veil = document.createElement('div'); veil.id = 'veil';
+    const box = document.createElement('div'); box.id = 'flybox';
+    const img = new Image(); img.id = 'fly'; img.src = images[idx0]; img.draggable = false;
     img.style.width = w + 'px'; img.style.height = h + 'px';
     const from = `translate(${cx - w / 2}px, ${cy - h / 2}px) rotate(${ang}rad) scale(1)`;
     const k = Math.min(innerHeight * 0.86 / h, innerWidth * 0.9 / w);
     const to = `translate(${innerWidth / 2 - w / 2}px, ${innerHeight / 2 - h / 2}px) rotate(0rad) scale(${k})`;
-    img.style.transform = from; document.body.append(veil, img); setHover(null); setCursor('default');
-    fly = { veil, img, from, closing: false };
-    const start = () => requestAnimationFrame(() => requestAnimationFrame(() => { veil.classList.add('on'); img.style.transform = to; }));
+    img.style.transform = from; box.append(img);
+    let prev = null, next = null, dots = null;
+    if (images.length > 1) {
+      prev = document.createElement('button'); prev.className = 'fly-nav prev'; prev.type = 'button'; prev.setAttribute('aria-label', '上一张'); prev.textContent = '‹';
+      next = document.createElement('button'); next.className = 'fly-nav next'; next.type = 'button'; next.setAttribute('aria-label', '下一张'); next.textContent = '›';
+      dots = document.createElement('div'); dots.className = 'fly-dots';
+      for (let i = 0; i < images.length; i++) { const d = document.createElement('i'); if (i === idx0) d.className = 'on'; dots.append(d); }
+      box.append(prev, next, dots);
+      prev.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); switchFly(-1); });
+      next.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); switchFly(1); });
+    }
+    document.body.append(veil, box); setHover(null); setCursor('default');
+    fly = { veil, box, img, from, to, closing: false, images, idx: idx0, series: pk.pocket ? pk.pocket.id : null, key: pk.key, P: pk.P, dots, w, h };
+    const start = () => requestAnimationFrame(() => requestAnimationFrame(() => { veil.classList.add('on'); box.classList.add('on'); img.style.transform = to; }));
     if (img.complete) start(); else img.onload = start;
-    veil.addEventListener('pointerdown', closeFly); img.addEventListener('pointerdown', closeFly);
+    veil.addEventListener('pointerdown', closeFly);
+    img.addEventListener('pointerdown', (ev) => { if (images.length < 2) closeFly(); else ev.stopPropagation(); });
+  }
+  function markDots() {
+    if (!fly || !fly.dots) return;
+    [...fly.dots.children].forEach((d, i) => { d.className = i === fly.idx ? 'on' : ''; });
+  }
+  async function switchFly(dir) {
+    if (!fly || fly.closing || fly.images.length < 2) return;
+    fly.idx = (fly.idx + dir + fly.images.length) % fly.images.length;
+    fly.img.style.opacity = '0';
+    const url = fly.images[fly.idx];
+    await new Promise((r) => { const im = new Image(); im.onload = () => { fly.img.src = url; fly.img.onload = () => { fly.img.style.opacity = '1'; r(); }; if (fly.img.complete) { fly.img.style.opacity = '1'; r(); } }; im.src = url; });
+    markDots();
+    if (fly.series) E.setSeriesCover(fly.series, fly.idx);
   }
   function closeFly() {
-    if (!fly || fly.closing) return; const f = fly; f.closing = true; f.veil.classList.remove('on'); f.img.style.transform = f.from;
-    setTimeout(() => { f.veil.remove(); f.img.remove(); if (fly === f) fly = null; }, 620);
+    if (!fly || fly.closing) return; const f = fly; f.closing = true; f.veil.classList.remove('on'); f.box.classList.remove('on'); f.img.style.transform = f.from;
+    if (f.series) E.setSeriesCover(f.series, f.idx);
+    setTimeout(() => { f.veil.remove(); f.box.remove(); if (fly === f) fly = null; }, 620);
   }
 
   // ---------- 输入 ----------
-  const down = { active: false, id: -1, x: 0, y: 0, t: 0, moved: 0 };
+  const down = { active: false, id: -1, x: 0, y: 0, t: 0, moved: 0, armed: false, zone: null, item: null };
   function setPtr(ev) { const r = canvas.getBoundingClientRect(); ptr.cx = ev.clientX; ptr.cy = ev.clientY; ptr.x = ((ev.clientX - r.left) / r.width) * 2 - 1; ptr.y = -(((ev.clientY - r.top) / r.height) * 2 - 1); ptr.inside = true; }
-  canvas.addEventListener('pointerdown', (ev) => {
-    setPtr(ev);
-    if (mode === 'cover') { if (E.hitBook(ev.clientX, ev.clientY)) startOpening(); return; }
-    if (mode === 'opening') { skipOpening(); return; }
-    if (turn && !turn.peek) return;                               // 上一页还在落：不接新的拖拽（键盘和滚轮会排队）
-    const z = zoneAt(ev.clientX, ev.clientY);
-    if (!z || !canGrab(z.side)) { const pk = E.pick(ev.clientX, ev.clientY, spread); if (pk) { idleT = 0; if (pk.fly) openFly(pk); else pokeItem(pk); } return; }
+  function pressLift(z) {
     const leaf = leafFor(z.side);
     if (turn && turn.leaf !== leaf) { turn.target = turn.p < 0.5 ? 0 : 1; commitTurn(); }
     if (!turn) beginTurn(leaf, z.side > 0 ? 0 : 1, z.corner);
-    turn.peek = false; turn.auto = null; turn.held = true; turn.corner = z.corner; turn.side = z.side;
-    // 捏住的点离书脊的距离：按当前翘起的程度反推，按下的一瞬间纸不跳
-    const Y = E.pageY(leaf); const h = E.hitPlane(ev.clientX, ev.clientY, (Y.r + Y.l) / 2 + 0.4);
-    const c = Math.cos(Math.PI * turn.p); turn.g = Math.min(S.PW + 1, Math.max(S.PW * 0.5, h && Math.abs(c) > 0.3 ? h.x / c : S.PW));
-    turn.pT = turn.p; turn.vp = 0;
-    down.active = true; down.id = ev.pointerId; down.x = ev.clientX; down.y = ev.clientY; down.t = performance.now(); down.moved = 0;
-    canvas.setPointerCapture(ev.pointerId); setCursor('grabbing'); ev.preventDefault();
+    turn.peek = true; turn.held = false; turn.auto = null; turn.corner = z.corner; turn.side = z.side;
+    turn.target = z.side > 0 ? Math.min(0.035, turn.limit) : Math.max(1 - 0.035, 1 - turn.limit);
+    turn.g = Math.min(S.PW, Math.max(4, z.x));
+  }
+  canvas.addEventListener('pointerdown', (ev) => {
+    setPtr(ev);
+    if (mode === 'cover') { if (E.hitBook(ev.clientX, ev.clientY)) { if (dolly < 0.995) { openAfter = true; hurryIntro(); } else startOpening(); } return; }
+    if (mode === 'opening') { hurryIntro(); return; }
+    if (fly) return;
+    if (turn && !turn.peek) return;
+    const z = zoneAt(ev.clientX, ev.clientY), pk = E.pick(ev.clientX, ev.clientY, spread);
+    down.active = true; down.id = ev.pointerId; down.x = ev.clientX; down.y = ev.clientY; down.t = performance.now(); down.moved = 0; down.armed = false; down.zone = z && canGrab(z.side) ? z : null; down.item = pk;
+    // 点在实心物件 / 海报收纳口上：先不掀页，短点＝互动，拖开才翻页
+    const blockPeek = pk && pk.P.g !== 'soft';
+    if (down.zone && !blockPeek) { pressLift(down.zone); canvas.setPointerCapture(ev.pointerId); setCursor('grabbing'); ev.preventDefault(); }
+    else if (down.zone || pk) { canvas.setPointerCapture(ev.pointerId); ev.preventDefault(); }
   });
   canvas.addEventListener('pointermove', (ev) => {
     setPtr(ev);
     if (mode !== 'read') return;
-    if (down.active && turn && turn.held) {
+    if (down.active) {
       down.moved = Math.max(down.moved, Math.hypot(ev.clientX - down.x, ev.clientY - down.y));
-      turn.pT = pointerP(ev.clientX, ev.clientY); return;
+      if (down.zone && down.moved > TURN.clickPx) {
+        if (!down.armed) {
+          if (!turn) pressLift(down.zone);
+          if (!turn) return;
+          down.armed = true; turn.peek = false; turn.held = true;
+          const Y = E.pageY(turn.leaf), h = E.hitPlane(ev.clientX, ev.clientY, (Y.r + Y.l) / 2 + 0.4);
+          const c = Math.cos(Math.PI * turn.p);
+          if (h) turn.g = Math.min(S.PW + 1, Math.max(4, Math.abs(c) > 0.25 ? h.x / c : turn.g));
+        }
+        if (turn && turn.held) {
+          const Y = E.pageY(turn.leaf), h = E.hitPlane(ev.clientX, ev.clientY, (Y.r + Y.l) / 2 + 0.4);
+          if (h) turn.corner = h.z > 0 ? 1 : -1;
+          turn.pT = pointerP(ev.clientX, ev.clientY);
+        }
+      }
+      return;
     }
     if (ev.pointerType === 'touch') return;
-    // 悬停：指到书角，书角轻轻翘起
-    const z = zoneAt(ev.clientX, ev.clientY); const ok = z && canGrab(z.side);
+    const z = zoneAt(ev.clientX, ev.clientY), pk = E.pick(ev.clientX, ev.clientY, spread);
+    const can = z && canGrab(z.side);
     if (turn && !turn.peek) { setCursor('default'); return; }
-    const pk = ok ? null : E.pick(ev.clientX, ev.clientY, spread);
-    if (!turn) setHover(pk);
-    setCursor(ok ? 'grab' : pk ? (pk.fly ? 'zoom-in' : 'pointer') : 'default');
-    if (ok && z.inCorner) {
+    if (!turn) setHover(pk && !pk.fly ? pk : null);
+    setCursor(pk ? (pk.fly || pk.pocket ? 'zoom-in' : 'pointer') : can ? 'grab' : 'default');
+    if (can && !pk && z.inCorner) {
       const leaf = leafFor(z.side);
       if (turn && turn.leaf !== leaf) { turn.target = turn.p < 0.5 ? 0 : 1; commitTurn(); }
       if (!turn) { beginTurn(leaf, z.side > 0 ? 0 : 1, z.corner); turn.peek = true; }
       turn.auto = null; turn.corner = z.corner; turn.target = z.side > 0 ? Math.min(TURN.peek, turn.limit) : 1 - TURN.peek;
-    } else if (turn && turn.peek && turn.auto == null) turn.target = turn.p < 0.5 ? 0 : 1;
+    } else if (turn && turn.peek && turn.auto == null && !down.active) turn.target = turn.p < 0.5 ? 0 : 1;
   });
   function release(ev) {
-    if (!down.active || ev.pointerId !== down.id) return; down.active = false;
-    if (!turn || !turn.held) return; const T = turn; T.held = false;
+    if (!down.active || ev.pointerId !== down.id) return;
     const click = performance.now() - down.t < TURN.clickMs && down.moved < TURN.clickPx;
-    if (T.limit < 1) { T.target = 0; T.v = click ? 1.6 : T.vp; }
-    else if (click) { T.target = T.side > 0 ? 1 : 0; T.v = T.side * TURN.kick; }
-    else { T.target = T.vp > TURN.flick ? 1 : T.vp < -TURN.flick ? 0 : T.p > 0.5 ? 1 : 0; T.v = Math.max(-6, Math.min(6, T.vp)); }   // 带着松手速度落位
+    const zone = down.zone, item = down.item, armed = down.armed;
+    down.active = false; down.zone = null; down.item = null;
+    if (armed && turn && turn.held) {
+      const T = turn; T.held = false;
+      if (T.limit < 1) { T.target = 0; T.v = click ? 1.6 : T.vp; }
+      else if (click) { T.target = T.side > 0 ? 1 : 0; T.v = T.side * TURN.kick; }
+      else { T.target = T.vp > TURN.flick ? 1 : T.vp < -TURN.flick ? 0 : T.p > 0.5 ? 1 : 0; T.v = Math.max(-6, Math.min(6, T.vp)); }
+    } else if (click && item && (item.pocket || item.fly)) {
+      if (turn && turn.peek) turn.target = turn.p < 0.5 ? 0 : 1;
+      openFly(item);
+    } else if (click && item) {
+      if (turn && turn.peek) turn.target = turn.p < 0.5 ? 0 : 1;
+      if (item.P.g !== 'soft') toggleHold(item); else pokeItem(item);
+    } else if (click && zone) requestTurn(zone.side);
+    else if (turn && turn.peek && turn.auto == null) turn.target = turn.p < 0.5 ? 0 : 1;
     setCursor('default');
   }
   canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', release);
@@ -240,21 +318,36 @@ export function startRuntime(E) {
   addEventListener('keydown', (ev) => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     const k = ev.key;
-    if (fly) { closeFly(); ev.preventDefault(); return; }
-    if (mode === 'cover') { if (k === 'Enter' || k === ' ') { startOpening(); ev.preventDefault(); } return; }
-    if (mode === 'opening') { skipOpening(); return; }
+    if (fly) {
+      if (k === 'Escape') { closeFly(); ev.preventDefault(); return; }
+      if (k === 'ArrowRight' || k === 'ArrowLeft') {
+        if (fly.images.length > 1) switchFly(k === 'ArrowRight' ? 1 : -1);
+        else closeFly();
+        ev.preventDefault(); return;
+      }
+      if (k === ' ' || k === 'Enter') { closeFly(); ev.preventDefault(); return; }
+      return;
+    }
+    if (mode === 'cover') { if (k === 'Enter' || k === ' ') { if (dolly < 0.995) { openAfter = true; hurryIntro(); } else startOpening(); ev.preventDefault(); } return; }
+    if (mode === 'opening') { hurryIntro(); return; }
     if (k === 'ArrowRight' || k === ' ' || k === 'PageDown') { requestTurn(1); ev.preventDefault(); }
     else if (k === 'ArrowLeft' || k === 'PageUp') { requestTurn(-1); ev.preventDefault(); }
   });
   // 滚轮 / 触控板：一次滑动翻一页（滑动停下 180 毫秒后才算下一次）
   const wheel = { acc: 0, fired: false, timer: 0 };
   addEventListener('wheel', (ev) => {
-    if (mode !== 'read' || fly) return; ev.preventDefault();
+    if (fly) {
+      if (fly.images.length > 1) { ev.preventDefault(); if (!wheel.fired) { wheel.fired = true; switchFly((Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY) > 0 ? 1 : -1); }
+        clearTimeout(wheel.timer); wheel.timer = setTimeout(() => { wheel.acc = 0; wheel.fired = false; }, 180); }
+      return;
+    }
+    if (mode === 'cover' || mode === 'opening') { ev.preventDefault(); hurryIntro(); return; }
+    if (mode !== 'read') return; ev.preventDefault();
     const d = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY; wheel.acc += d;
     if (!wheel.fired && Math.abs(wheel.acc) > 40) { wheel.fired = true; requestTurn(wheel.acc > 0 ? 1 : -1); }
     clearTimeout(wheel.timer); wheel.timer = setTimeout(() => { wheel.acc = 0; wheel.fired = false; }, 180);
   }, { passive: false });
-  addEventListener('resize', () => { E.resize(); shadowHold = 3; if (fly) { fly.veil.remove(); fly.img.remove(); fly = null; } });
+  addEventListener('resize', () => { E.resize(); shadowHold = 3; if (fly) { fly.veil.remove(); fly.box.remove(); fly = null; } });
 
   // ---------- 每帧 ----------
   function frame(now) {
@@ -273,7 +366,8 @@ export function startRuntime(E) {
 
   // 调试 / 自测接口
   return {
-    get mode() { return mode; }, get spread() { return spread; }, get turn() { return turn ? { leaf: turn.leaf, p: +turn.p.toFixed(3), target: turn.target, held: turn.held, peek: turn.peek } : null; },
+    get mode() { return mode; }, get spread() { return spread; }, get spreads() { return E.spreads; },
+    get turn() { return turn ? { leaf: turn.leaf, p: +turn.p.toFixed(3), target: turn.target, held: turn.held, peek: turn.peek } : null; },
     open: startOpening, skip: skipOpening, turnPage: requestTurn,
     goto(s) { enterRead(Math.max(0, Math.min(E.spreads - 1, s))); turnedOnce = true; },
     close: enterCover,

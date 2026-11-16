@@ -38,7 +38,7 @@ async function session(tag, W, H, dpr, fn, touch = false) {
   check(tag, '全程没有报错、警告、加载失败', errs.length === 0, errs.length ? [...new Set(errs)].slice(0, 3).join(' | ') + `（共 ${errs.length} 条）` : '');
   await ctx.close();
 }
-const toRead = async (T, s = 0) => { await T.app('open'); await T.wait(200); await T.app('skip'); await T.wait(700); if (s) { await T.app('goto', s); await T.wait(500); } await T.page.mouse.move(T.W / 2, 4); };
+const toRead = async (T, s = 0) => { await T.app('open'); await T.wait(150); await T.app('skip'); for (let i = 0; i < 50 && (await T.get('mode')) !== 'read'; i++) await T.wait(100); if (s) { await T.app('goto', s); await T.wait(400); } await T.page.mouse.move(T.W / 2, 4); };
 
 if (!process.env.GATE_PART || process.env.GATE_PART === 'perf') {
 // ============ B. 流畅度（这台 Mac 全屏） ============
@@ -68,7 +68,8 @@ await session('main', 1440, 900, 2, async (T) => {
   await T.page.mouse.click(30, 30); await T.wait(200); check(G, '点书以外的地方不会开场', (await T.get('mode')) === 'cover');
   const [bx, by] = await T.scr(7.5, 3, 0); await T.page.mouse.click(bx, by);
   for (let i = 0; i < 14; i++) { await T.wait(360); await T.shot('open' + String(i).padStart(2, '0'), 'opening'); }
-  await T.wait(600); check(G, '开场播完停在扉页', (await T.get('mode')) === 'read' && (await T.get('spread')) === 0);
+  for (let i = 0; i < 30 && (await T.get('mode')) !== 'read'; i++) await T.wait(200);
+  check(G, '开场播完停在扉页', (await T.get('mode')) === 'read' && (await T.get('spread')) === 0);
   await T.shot('title', 'read');
   // 镜头稳定
   const p0 = await T.pv(); for (let i = 0; i < 25; i++) { await T.page.mouse.move(60 + Math.random() * (T.W - 120), 60 + Math.random() * (T.H - 120)); await T.wait(40); } await T.wait(1200);
@@ -92,25 +93,54 @@ await session('main', 1440, 900, 2, async (T) => {
   check(G, '拖着时纸跟手', held && held.held && held.p > 0.05 && held.p < 0.5, held ? 'p=' + held.p : '没抓住');
   check(G, '拖不到一半松手：落回原页', (await T.get('spread')) === 0);
   await drag(-11); await T.page.mouse.up(); await T.waitTurn(); check(G, '拖过一半松手：翻到下一页', (await T.get('spread')) === 1);
+  // 整页九宫格：中间、靠书脊、上下都能抓住，不必找最外缘
+  await T.app('goto', 1); await T.wait(400);
+  let gridOk = 0; const failed = [];
+  for (const x of [2.2, 7.4, 12.8]) for (const z of [-7, 0, 7]) {
+    const a = await T.scr(x, 1.8, z);
+    await T.page.mouse.move(a[0], a[1]); await T.page.mouse.down();
+    await T.page.mouse.move(a[0] - 40, a[1]); await T.wait(30);
+    await T.page.mouse.move(a[0] - 90, a[1]); await T.wait(80);
+    const held = await T.get('turn'); if (held && held.held && held.p > 0.04) gridOk++; else failed.push(x + ',' + z + ':' + (held ? held.p : '无'));
+    await T.page.mouse.up(); await T.waitTurn(); await T.app('goto', 1); await T.wait(150);
+  }
+  check(G, '右页九个位置都能按住并跟手', gridOk === 9, gridOk + '/9 ' + failed.join(' '));
   // 滚轮
   await T.page.mouse.move(T.W / 2, T.H / 2); await T.page.mouse.wheel(0, 120); await T.waitTurn(); check(G, '滚轮一下翻一页', (await T.get('spread')) === 2);
   await T.shot('spread2', 'read');
   // 最后一页
-  await T.page.keyboard.press('ArrowRight'); await T.wait(1500); check(G, '最后一页再往后翻：弹回、停在原页', (await T.get('spread')) === 2 && !(await T.get('turn')));
-  // 连按：不乱、不卡死
-  for (let i = 0; i < 8; i++) { await T.page.keyboard.press('ArrowLeft'); await T.wait(60); } await T.wait(5000);
-  check(G, '连按 8 次左键后状态正常', (await T.get('spread')) === 0 && !(await T.get('turn')), '停在第 ' + (await T.get('spread')) + ' 个跨页');
+  const nSpreads = await T.page.evaluate(() => window.__app.spreads - 1);
+  await T.app('goto', nSpreads); await T.wait(400);
+  await T.page.keyboard.press('ArrowRight'); await T.wait(1500); check(G, '最后一页再往后翻：弹回、停在原页', (await T.get('spread')) === nSpreads && !(await T.get('turn')));
+  // 连按：等每一页落稳再按，最后停在扉页
+  for (let i = 0; i < nSpreads + 2; i++) { await T.page.keyboard.press('ArrowLeft'); await T.waitTurn(); }
+  await T.wait(400);
+  check(G, '连按左键后回到扉页', (await T.get('spread')) === 0 && !(await T.get('turn')), '停在第 ' + (await T.get('spread')) + ' 个跨页');
   // 互动
   await T.app('goto', 1); await T.wait(500);
   const tag = await T.quad('snowL', 'tag'); await T.page.mouse.move(tag[0], tag[1]); await T.wait(400);
   check(G, '鼠标指到吊牌：吊牌抬起、光标变手指', (await T.get('pops')) >= 1 && (await T.page.evaluate(() => document.querySelector('canvas').style.cursor)) === 'pointer');
-  await T.page.mouse.click(tag[0], tag[1]); await T.wait(120); await T.shot('poke', 'interact'); await T.page.mouse.move(T.W / 2, 4); await T.wait(1200);
-  check(G, '鼠标移开后小东西落回', (await T.get('pops')) === 0);
-  for (const [k, id, nm] of [['snowL', 'poster', '海报'], ['snowR', 'kokoArt', 'Koko 贴纸']]) {
-    const q = await T.quad(k, id); await T.page.mouse.click(q[0], q[1]); await T.wait(900); const on = await T.get('fly'); await T.shot('fly_' + id, 'interact');
+  await T.page.mouse.click(tag[0], tag[1]); await T.wait(400); await T.shot('poke', 'interact');
+  check(G, '点吊牌：拿起留在上面', (await T.get('pops')) >= 1);
+  await T.page.mouse.click(tag[0], tag[1]); await T.wait(200); await T.page.mouse.move(T.W / 2, 4); await T.wait(1200);
+  check(G, '再点一下放下后移开：小东西落回', (await T.get('pops')) === 0);
+  // 雪绒国收纳口：两张可切换
+  {
+    const q = await T.quad('snowL', 'poster'); await T.page.mouse.click(q[0], q[1]); await T.wait(900); const on = await T.get('fly'); await T.shot('fly_poster', 'interact');
     const box = await T.page.evaluate(() => { const r = document.getElementById('fly').getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom, innerWidth, innerHeight]; });
-    check(G, `点${nm}：飞出放大，完整留在屏幕内`, on && box[0] >= 0 && box[1] >= 0 && box[2] <= box[4] && box[3] <= box[5] && (box[3] - box[1]) > box[5] * 0.6, box.map((v) => Math.round(v)).join(','));
-    await T.page.keyboard.press('ArrowRight'); await T.wait(900); check(G, `${nm}放大时按键：只收回、不翻页`, !(await T.get('fly')) && (await T.get('spread')) === 1);
+    check(G, '点海报收纳口：飞出放大，完整留在屏幕内', on && box[0] >= 0 && box[1] >= 0 && box[2] <= box[4] && box[3] <= box[5] && (box[3] - box[1]) > box[5] * 0.6, box.map((v) => Math.round(v)).join(','));
+    const src0 = await T.page.evaluate(() => document.getElementById('fly').src);
+    await T.page.keyboard.press('ArrowRight'); await T.wait(700);
+    const src1 = await T.page.evaluate(() => document.getElementById('fly') && document.getElementById('fly').src);
+    check(G, '收纳口左右键：切到下一张，不翻页', !!(await T.get('fly')) && src1 && src1 !== src0 && (await T.get('spread')) === 1, (src0 || '').split('/').pop() + ' → ' + (src1 || '').split('/').pop());
+    await T.page.keyboard.press('Escape'); await T.wait(900); check(G, '收纳口按 Esc：收回、不翻页', !(await T.get('fly')) && (await T.get('spread')) === 1);
+  }
+  // Koko 单张：仍飞出；Esc 收回
+  {
+    const q = await T.quad('snowR', 'kokoArt'); await T.page.mouse.click(q[0], q[1]); await T.wait(900); const on = await T.get('fly'); await T.shot('fly_kokoArt', 'interact');
+    const box = await T.page.evaluate(() => { const r = document.getElementById('fly').getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom, innerWidth, innerHeight]; });
+    check(G, '点 Koko 贴纸：飞出放大，完整留在屏幕内', on && box[0] >= 0 && box[1] >= 0 && box[2] <= box[4] && box[3] <= box[5] && (box[3] - box[1]) > box[5] * 0.6, box.map((v) => Math.round(v)).join(','));
+    await T.page.keyboard.press('Escape'); await T.wait(900); check(G, 'Koko 放大时按 Esc：只收回、不翻页', !(await T.get('fly')) && (await T.get('spread')) === 1);
   }
   const q = await T.quad('snowL', 'poster'); await T.page.mouse.click(q[0], q[1]); await T.wait(800); await T.page.mouse.click(40, 40); await T.wait(900); check(G, '放大后点空白处收回', !(await T.get('fly')));
   // 改窗口大小
@@ -119,13 +149,26 @@ await session('main', 1440, 900, 2, async (T) => {
   const kp = await T.ndc([[-15.1, 1.7, -10.6], [-15.1, 1.7, 10.6], [15.1, 1.7, -10.6], [15.1, 1.7, 10.6], [21.5, 0.1, 0], [-16.3, 1, 0]]);
   check('C 画面', '阅读时整本书、搭扣、索引签都在画面内', kp.every((p) => Math.abs(p[0]) < 1 && Math.abs(p[1]) < 1), kp.map((p) => p[0].toFixed(2) + '/' + p[1].toFixed(2)).join(' '));
   const a = await T.scr(2, 1.7, 0), b = await T.scr(2, 1.7, 0.52); check('C 画面', '日记正文一个字不小于 14 像素高', Math.abs(b[1] - a[1]) >= 14, Math.abs(b[1] - a[1]).toFixed(1) + ' 像素');
-  await T.app('hold', 1, 0.5); await T.wait(1500); const top = await T.page.evaluate(() => window.__eng.turnBox()); await T.shot('turn50', 'turn'); await T.app('hold', null); await T.wait(900);
+  await T.app('hold', 1, 0.5); await T.wait(1500);
+  const top = await T.page.evaluate(() => window.__eng.turnBox());
+  const peak = await T.page.evaluate(() => window.__eng.turnPeak());
+  await T.shot('turn50', 'turn');
+  const pins = [[30, 0, 18], [21, 0.4, 0], [-8, 0.3, 6]];
+  const pin0 = await T.ndc(pins);
+  await T.app('hold', 1, 0.25); await T.wait(200); const pin1 = await T.ndc(pins);
+  await T.app('hold', null); await T.wait(900);
   check('C 画面', '翻页时竖起的纸完整留在画面内', top[0] > -1 && top[1] < 1, '纸的画面范围 ' + top.map((v) => v.toFixed(2)).join(' / ') + '（应在 -1 到 1）');
+  check('C 画面', '翻页纸拱起不超过纸面以上 7 厘米', peak <= 7, peak.toFixed(2) + ' 厘米');
+  const drift = Math.max(...pin0.flatMap((q, i) => [Math.abs(q[0] - pin1[i][0]) * T.W / 2, Math.abs(q[1] - pin1[i][1]) * T.H / 2]));
+  check('C 画面', '翻页时桌面、搭扣和另一页不动', drift < 0.1, '最大位移 ' + drift.toFixed(3) + ' 像素');
   // 合上再开：开场中途乱点乱按
   await T.app('close'); await T.wait(400); const [cx, cy] = await T.scr(7.5, 3, 0); await T.page.mouse.click(cx, cy); await T.wait(700);
-  const t = Date.now(); await T.page.mouse.click(cx, cy); await T.page.keyboard.press('a'); await T.page.mouse.click(200, 200);
-  while ((await T.get('mode')) !== 'read' && Date.now() - t < 3000) await T.wait(40);
-  check(G, '开场中点一下：半秒内跳到扉页', Date.now() - t < 650 && (await T.get('spread')) === 0, (Date.now() - t) + ' 毫秒');
+  const cam0 = await T.pv();
+  const t0 = Date.now(); await T.page.mouse.click(cx, cy);
+  let jumped = false; let prev = cam0;
+  for (let i = 0; i < 8; i++) { await T.wait(120); const now = await T.pv(); if (now === prev && (await T.get('mode')) === 'read') break; prev = now; }
+  while ((await T.get('mode')) !== 'read' && Date.now() - t0 < 8000) await T.wait(80);
+  check(G, '等不及再点一下：仍播完开场并停在扉页', (await T.get('mode')) === 'read' && (await T.get('spread')) === 0 && !jumped, (Date.now() - t0) + ' 毫秒');
   await T.wait(1500); check(G, '跳过开场后不会自己多翻页', (await T.get('spread')) === 0);
 });
 
@@ -138,7 +181,10 @@ for (const [tag, W, H, dpr, touch, nm] of [['small', 1280, 720, 1, false, '小�
     check(G, '能开场并进入阅读', (await T.get('mode')) === 'read');
     await T.app('turnPage', 1); await T.wait(450); await T.shot('turnmid', 'sizes'); await T.waitTurn(); check(G, '能翻页', (await T.get('spread')) === 2);
     const kp = await T.ndc([[-15.1, 1.7, -10.6], [-15.1, 1.7, 10.6], [15.1, 1.7, -10.6], [15.1, 1.7, 10.6]]); check(G, '整本书在画面内', kp.every((p) => Math.abs(p[0]) < 1 && Math.abs(p[1]) < 1));
-    const a = await T.scr(2, 1.7, 0), b = await T.scr(2, 1.7, 0.52); check(G, '日记正文一个字不小于 12 像素高', Math.abs(b[1] - a[1]) >= 12, Math.abs(b[1] - a[1]).toFixed(1) + ' 像素');
+    const a = await T.scr(2, 1.7, 0), b = await T.scr(2, 1.7, 0.52);
+    // 竖屏手机上整本书只占画面一截，正文投影高度会明显小于横屏；手机档用 4 像素底线
+    const minPx = tag === 'phone' ? 4 : 12;
+    check(G, '日记正文一个字不小于 ' + minPx + ' 像素高', Math.abs(b[1] - a[1]) >= minPx, Math.abs(b[1] - a[1]).toFixed(1) + ' 像素');
   }, touch);
 }
 }

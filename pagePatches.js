@@ -59,7 +59,7 @@ vec3 gutterShade(vec3 lit){
   const solidFrag = GUTTER + /* glsl */`
 uniform sampler2D uAtlas;
 void main(){
-  vec4 t = texture2D(uAtlas, vUv, -0.35);
+  vec4 t = texture2D(uAtlas, vUv, lodBias(vUv));
   float side = step(0.5, vSide.a);
   if(side < 0.5 && t.a < 0.5) discard;
   vec3 tex = unpremul(t);
@@ -76,7 +76,7 @@ void main(){
   const softFrag = GUTTER + /* glsl */`
 uniform sampler2D uAtlas;
 void main(){
-  vec4 t = texture2D(uAtlas, vUv, -0.35);
+  vec4 t = texture2D(uAtlas, vUv, lodBias(vUv));
   if(t.a < 0.012) discard;
   vec3 tex = unpremul(t);
   vec3 N = normalize(vWN); if(!gl_FrontFacing) N = N;
@@ -93,7 +93,7 @@ uniform sampler2D uMap; uniform float uPremul;
 vec3 unpremul(vec4 t){ return pow(pow(max(t.rgb, vec3(0.0)), vec3(1.0/2.2)) / max(t.a, 0.004), vec3(2.2)); }
 varying vec4 vSide; varying vec3 vPg;
 void main(){
-  vec4 t = texture2D(uMap, vUv, -0.35);
+  vec4 t = texture2D(uMap, vUv, lodBias(vUv));
   if(t.a < 0.5) discard;
   vec3 rgb = uPremul > 0.5 ? unpremul(t) : t.rgb;
   float sm = getShadowMask();
@@ -131,7 +131,7 @@ void main(){
     m.blendSrcAlpha = THREE.ZeroFactor; m.blendDstAlpha = THREE.OneFactor; m.transparent = true; m.depthWrite = false; return m; };
   const mkSolid = (tex) => makeMat(solidFrag, Object.assign({ uAtlas: { value: tex } }, gutterU()), { vertexShader: PATCH_VERT, side: THREE.DoubleSide });
   const mkSoft = (tex) => keepAlpha(makeMat(softFrag, Object.assign({ uAtlas: { value: tex } }, gutterU()), { vertexShader: PATCH_VERT, side: THREE.DoubleSide }));
-  const mkPoster = (tex, premul) => makeMat(posterFrag, { uMap: { value: tex }, uPremul: { value: premul ? 1 : 0 } }, { vertexShader: PATCH_VERT, side: THREE.DoubleSide });
+  const mkPoster = (tex, premul) => makeMat(posterFrag, { uMap: { value: tex }, uPremul: { value: premul ? 1 : 0 } }, { vertexShader: PATCH_VERT, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
   const mkWire = () => makeMat(wireFrag, Object.assign({ uMetal: { value: col(0xE3AE5C) }, uRed: { value: col(0xE0664F) }, uWhite: { value: col(0xFFF6E6) } }, gutterU()), { vertexShader: PATCH_VERT });
 
   // ---------------- 轮廓：alpha 掩码 → 最大连通块 → Moore 边界追踪 → 弧长重采样 + 平滑 ----------------
@@ -206,13 +206,17 @@ void main(){
     return (G.hs[j * W + i] * (1 - a) + G.hs[j * W + i + 1] * a) * (1 - b) + (G.hs[(j + 1) * W + i] * (1 - a) + G.hs[(j + 1) * W + i + 1] * a) * b;
   }
   function baseAt(P, x, y) {
-    if (!P.conform) return P.z;
-    let m = 0; for (const Q of P.below) if (Q.g === 'solid' && inside(Q, x, y)) m = Math.max(m, topAt(Q, x, y));
-    return Math.max(P.z, m + 0.006);
+    let m = P.z;
+    for (const Q of P.below) {
+      if (!(Q.g === 'solid' || Q.g === 'soft')) continue;
+      const hit = Q.g === 'soft' ? inside(Q, x, y) || (x >= Q.bb[0] && x <= Q.bb[2] && y >= Q.bb[1] && y <= Q.bb[3]) : inside(Q, x, y);
+      if (hit) m = Math.max(m, topAt(Q, x, y) + 0.03);
+    }
+    return m;
   }
   function topAt(P, x, y) {
     if (P.g === 'soft') return softAt(P, x, y);
-    if (P.on) return topAt(P.on, x, y) + 0.0015;
+    if (P.on) return topAt(P.on, x, y) + 0.04;
     const [lx, ly] = toLocal(P, x, y); const base = baseAt(P, x, y);
     let top = base + P.t + P.H(lx, ly) + bumpAt(P, x, y);
     for (const Q of P.cappers) if (inside(Q, x, y, true)) top = Math.min(top, Q.z - 0.008);
@@ -409,9 +413,11 @@ void main(){
     tm.mask = performance.now() - tb0;
     // 上下关系
     const solids = recs.filter((P) => P.g === 'solid'), softs = recs.filter((P) => P.g === 'soft');
+    const isPress = (Q) => Q.press || (Q.id && String(Q.id).startsWith('corner'));
     for (const P of recs) {
-      P.below = recs.filter((Q) => Q !== P && (Q.g === 'solid' || Q.g === 'soft') && Q.z < P.z && bbOv(P.bb, Q.bb));
-      P.cappers = solids.filter((Q) => Q !== P && Q.z > P.z && !Q.conform && !Q.on && bbOv(P.bb, Q.bb, 0.05));
+      P.below = recs.filter((Q) => Q !== P && (Q.g === 'solid' || Q.g === 'soft') && (Q.z < P.z || (P.restOn && P.restOn.includes(Q.id))) && bbOv(P.bb, Q.bb));
+      // 只有相角这类「压住下面」的才压低下层；贴纸/车票叠在上面只走 baseAt，不再把信封枕形压扁
+      P.cappers = solids.filter((Q) => Q !== P && Q.z > P.z && !Q.conform && !Q.on && isPress(Q) && bbOv(P.bb, Q.bb, 0.05));
     }
     // 回形针后脚：给被夹的纸片加一道鼓包
     const wires = (spec.wires || []).map((w) => Object.assign({}, w));
@@ -458,10 +464,12 @@ void main(){
     // 图集 + 网格
     const solidAt = packAtlases(solids), softAt2 = softs.length ? packAtlases(softs, 4096, 4096, 10) : [];
     const meshes = [];
-    for (const At of solidAt) { const B = Builder();
-      for (const P of At.items) { P.mi = meshes.length; P.v0 = B.n; const side = new THREE.Color(P.side || 0xFFF8EE); const G = topGrid(B, P, (x, y) => topAt(P, x, y), (lx, ly) => uvOf(P, lx, ly), P.cell || 0.3); P.topG = G;
-        skirt(B, P, P.outline, [side.r, side.g, side.b]); P.v1 = B.n; }
-      meshes.push(finishGeo(B, mkSolid(At.tex))); }
+    for (const At of solidAt) {
+      for (const P of At.items) { const B = Builder();
+        P.mi = meshes.length; P.v0 = 0; const side = new THREE.Color(P.side || 0xFFF8EE); const G = topGrid(B, P, (x, y) => topAt(P, x, y), (lx, ly) => uvOf(P, lx, ly), P.cell || 0.3); P.topG = G;
+        skirt(B, P, P.outline, [side.r, side.g, side.b]); P.v1 = B.n;
+        const m = finishGeo(B, mkSolid(At.tex)); m.renderOrder = P.z * 10; m.userData.patchZ = P.z; meshes.push(m); }
+    }
     for (const At of softAt2) { const B = Builder();
       for (const P of At.items.slice().sort((a, b) => a.z - b.z)) topGrid(B, P, (x, y) => softAt(P, x, y), (lx, ly) => uvOf(P, lx, ly), P.cell || 0.16);
       meshes.push(finishGeo(B, mkSoft(At.tex), { cast: false, order: 1 })); }
@@ -532,8 +540,11 @@ void main(){
     if (st.leftY !== frames.leftY) { frames.leftY = st.leftY; frames.left = staticFrame(true, st.leftY); }
     const turnOn = !!(st.turnFront || st.turnBack); let ms = 0;
     for (const key in pages) { const rec = pages[key]; const slot = want[key] || null;
-      for (const m of rec.meshes) m.visible = !!slot; if (!slot) { rec.cacheKey = ''; continue; }
       const isTurn = slot === 'turnFront' || slot === 'turnBack';
+      // 平放在纸上的贴片只用画进去的软影子。实时投影只在整页明显抬起后才打开，避免信封翻盖这类模型在信纸上投出一块硬三角影。
+      const cast = isTurn && (st.turnLift || 0) > 0.8;
+      for (const m of rec.meshes) { m.visible = !!slot; m.castShadow = cast; }
+      if (!slot) { rec.cacheKey = ''; continue; }
       const ck = slot + '|' + (isTurn || turnOn ? frames.turnVer : 'x') + '|' + (slot === 'right' ? st.rightY : slot === 'left' ? st.leftY : '') + '|' + (st.turnLift || 0).toFixed(3);
       if (ck === rec.cacheKey) continue; rec.cacheKey = ck;
       const F = slot === 'right' ? frames.right : slot === 'left' ? frames.left : slot === 'turnFront' ? frames.tf : frames.tb;
@@ -558,19 +569,34 @@ void main(){
   }
   // 页面上某一点（厘米）最上面的那件东西：实心贴片或海报（软的胶带、蕾丝垫不算）
   function pick(key, x, y) {
-    const rec = pages[key]; if (!rec) return null; let best = null;
-    for (const P of rec.recs) { if (P.v1 == null) continue; let hit;
+    const rec = pages[key]; if (!rec) return null; let best = null, bestH = -1;
+    for (const P of rec.recs) { if (P.v1 == null || P.noPick) continue; let hit;
       if (P.g === 'poster') { const [lx, ly] = toLocal(P, x, y); hit = Math.abs(lx) < P.hw && Math.abs(ly) < P.hh; } else hit = inside(P, x, y);
-      if (hit && (!best || P.z > best.z)) best = P; }
+      if (!hit) continue;
+      const h = (P.g === 'poster' ? topAt(P.on || P, x, y) : topAt(P, x, y)) + (P.pop || 0);
+      if (!best || h > bestH + 1e-4 || (Math.abs(h - bestH) < 1e-4 && P.z > best.z)) { best = P; bestH = h; } }
     return best;
   }
   // 把一件东西（连同贴在它上面的、它贴着的）整体抬高 v 厘米，tilt：一边高一边低
   function setPop(key, P, v, tilt = 0) {
     const rec = pages[key]; if (!rec) return; const root = P.on || P;
-    for (const T of rec.recs) { if (T !== root && T.on !== root) continue; if (T.v1 == null) continue; const m = rec.meshes[T.mi]; const loc = m.userData.loc;
+    root.pop = v;
+    for (const T of rec.recs) {
+      if (T !== root && T.on !== root) continue; if (T.v1 == null) continue;
+      const m = rec.meshes[T.mi]; if (!m) continue; const loc = m.userData.loc;
       const lf = m.userData.lift || (m.userData.lift = new Float32Array(loc.length / 3));
-      for (let k = T.v0; k < T.v1; k++) lf[k] = v * (1 + tilt * (loc[k * 3] - root.cx) / Math.max(root.hw, 0.5)); }
+      for (let k = T.v0; k < T.v1; k++) lf[k] = v * (1 + tilt * (loc[k * 3] - root.cx) / Math.max(root.hw, 0.5));
+      const base = m.userData.patchZ != null ? m.userData.patchZ * 10 : (T.z || 0) * 10;
+      m.renderOrder = (v > 0.04 ? 80 : 0) + base;
+      T.pop = v;
+    }
     rec.cacheKey = '';
   }
-  return { L, buildPage, sync, pointWorld, stats, pages, benchTurn, pick, setPop };
+  function setPosterMap(key, id, tex) {
+    const rec = pages[key]; if (!rec) return false;
+    const P = typeof id === 'object' ? id : rec.byId[id]; if (!P || P.g !== 'poster') return false;
+    const m = rec.meshes.find((q) => q.userData.poster === P); if (!m || !m.material.uniforms || !m.material.uniforms.uMap) return false;
+    P.tex = tex; m.material.uniforms.uMap.value = tex; m.material.needsUpdate = true; return true;
+  }
+  return { L, buildPage, sync, pointWorld, stats, pages, benchTurn, pick, setPop, setPosterMap };
 }
