@@ -1082,7 +1082,7 @@ async function buildContent() {
   loadProgress(0.1); await yieldFrame();
   globalThis.__patchKScale = (matchMedia('(pointer: coarse)').matches || Q.get('patchK') === 'low') ? 0.72 : 1;
   PATCH = createPatchSystem({ THREE, S, makeMat, col, prof, book, maxAniso: MAX_ANISO });
-  const pageMark = { snowL: 0.22, snowR: 0.32, nextL: 0.4, nextR: 0.48, cloudL: 0.55, cloudR: 0.6, seaL: 0.66, seaR: 0.7, starryL: 0.76, starryR: 0.8, creamL: 0.86, creamR: 0.9, title: 0.93 };
+  const pageMark = { snowL: 0.22, snowR: 0.32, nextL: 0.4, nextR: 0.48, cloudL: 0.55, cloudR: 0.6, seaL: 0.66, seaR: 0.7, starryL: 0.76, starryR: 0.8, creamL: 0.86, creamR: 0.9, endL: 0.93, endR: 0.96, title: 0.98 };
   pageRTs = await buildPages({ S, THREE, PAGE_RT_W, canvasLayer, makePageRT, renderPage, loadTex, loadImg, info, Q, PATCH, maxAniso: MAX_ANISO, onPage: async (key) => { loadProgress(pageMark[key] || 0.8); await yieldFrame(); } });
   info.patches = Object.assign({}, PATCH.stats);
   DR = buildDress({ THREE, S, col, makeMat, book, frontPivot, yH, COVER, brassMat, mergeGeos }); await DR.loadPhoto();
@@ -1267,7 +1267,7 @@ if (Q.get('ui')) { ui.style.display = 'block'; sl.oninput = () => applyState({ s
 
 // ---------------- 正式运行用的接口（runtime.js 调用）：这里只管「摆姿态」和「画一帧」，流程与输入都在 runtime.js ----------------
 const LEAF = 0;                        // 每翻一张左右两叠的厚度变化：先固定为 0（两叠始终等高）。要做「越往后翻左边越厚」时改这里，并让翻页纸的转轴高度按左右分开算
-// 书里的纸，按顺序：f = 正面（在右叠时朝上的那面），b = 背面。只保留已做好的跨页，末尾不接白页
+// 书里的纸，按顺序：f = 正面（在右叠时朝上的那面），b = 背面。末叶背面为贴纸收藏跨页，再后不接白页
 const LEAVES = [
   { f: 'title', b: 'snowL' },
   { f: 'snowR', b: 'nextL' },
@@ -1275,7 +1275,8 @@ const LEAVES = [
   { f: 'cloudR', b: 'seaL' },
   { f: 'seaR', b: 'starryL' },
   { f: 'starryR', b: 'creamL' },
-  { f: 'creamR', b: null },
+  { f: 'creamR', b: 'endL' },
+  { f: 'endR', b: null },
 ];
 const tLof = (s) => F0 + s * LEAF, tRof = (s) => S.T - tLof(s);
 const leftOf = (s) => (s === 0 ? 'blank' : LEAVES[s - 1].b), rightOf = (s) => (LEAVES[s] ? LEAVES[s].f : 'blank');
@@ -1287,7 +1288,7 @@ const SERIES = {
   starry: { name: '星夜彩铅', images: ['assets/Koko_starry_01_round_collection.jpg'], page: 'starryR', patch: 'poster', idx: 0 },
   cream: { name: '奶油素描', images: ['assets/Koko_cream_01_round_pegs.jpg'], page: 'creamR', patch: 'poster', idx: 0 },
 };
-const FLY_ONE = { kokoArt: 'assets/koko_cut_full.png' };   // 单张飞出（非系列收纳口）
+const FLY_ONE = { kokoArt: 'assets/koko_cut_full.png', endSlot: 'assets/koko_cut_full.png' };   // 单张飞出（非系列收纳口）；endSlot 点两次后飞出
 const seriesTexCache = {};
 async function ensureSeriesTex(url) {
   if (seriesTexCache[url]) return seriesTexCache[url];
@@ -1345,6 +1346,11 @@ const engine = {
   // —— 指针 ——
   hitPlane(cx, cy, y) { setHitRay(cx, cy); const t = (y - hitRay.ray.origin.y) / hitRay.ray.direction.y; return t > 0 ? hitRay.ray.origin.clone().addScaledVector(hitRay.ray.direction, t) : null; },
   hitBook(cx, cy) { setHitRay(cx, cy); return hitRay.ray.intersectsBox(closedBox); },
+  // Book-edge widgets (tucked tabs / tickets / photo, orange charm, enamel clasp): handles + ray helpers for runtime.js
+  rayHits(cx, cy, objs, deep = false) { setHitRay(cx, cy); return hitRay.intersectObjects(objs, deep); },
+  rayNear(cx, cy, p, r) { setHitRay(cx, cy); return hitRay.ray.distanceSqToPoint(p) < r * r; },
+  dress: () => DR, claspObj: btn,
+  spreadOf(page) { for (let s = 0; s < LEAVES.length; s++) if (leftOf(s) === page || rightOf(s) === page) return s; return -1; },
   // —— 页面上的东西 ——
   // 指针下面是哪一页的哪件东西；pocket：系列收纳口；fly：单张飞出
   pick(cx, cy, s) {
@@ -1395,8 +1401,8 @@ const engine = {
     poseClosed(); renderFrame();
     loadProgress(1);
     renderer.shadowMap.autoUpdate = false; window.__app = startRuntime(engine);
-    // 画面稳定跑了几帧之后再把加载页淡出去
-    { let n = 0; const go = () => { if (++n < 8) return requestAnimationFrame(go); const el = document.getElementById('loading'); if (el) { el.classList.add('gone'); setTimeout(() => el.remove(), 700); } }; requestAnimationFrame(go); }
+    // 预热已把开场和每一叶中缝画过；加载页立刻开始淡出，好在既有门禁的 900ms 内收到 opacity 0
+    { const el = document.getElementById('loading'); if (el) { el.classList.add('gone'); setTimeout(() => el.remove(), 700); } }
   }
   else { applyState(st); const el = document.getElementById('loading'); if (el) el.remove(); }
   window.__eng = { screenQuad: (k, P) => engine.screenQuad(k, P), patch: (k, id) => PATCH.pages[k].byId[id], turnBox: () => { const p = turnGeo.attributes.position; let y0=9,y1=-9; for(let i=0;i<p.count;i++){ const v=new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i)).project(camera); y0=Math.min(y0,v.y); y1=Math.max(y1,v.y); } return [y0,y1]; }, turnPeak: () => { const p = turnGeo.attributes.position; let m = 0; for (let i = 0; i < p.count; i++) m = Math.max(m, p.getY(i)); return m - (S.B + S.T * 0.5); } };   // 自测用

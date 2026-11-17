@@ -66,23 +66,23 @@ void main(){
     });
   };
   const PIN = 1.2; // 伸进书页的长度
-  for (const [no, name, color, h, z] of [[14, '星光熠熠', '#A9BEF0', 0.86, -8.75], [4, '云朵午后', '#86C1EC', 0.64, -4.35], [17, '雪绒国', '#A8C4E4', 0.31, 6.55], [18, '怼脸', '#E5574A', 0.12, 8.85]]) {
-    const sp = tab(no, name, color); const m = cardMesh(sp, 0.03, { edge: 0xffffff }); tuck(m, h, S.PW - PIN + sp.w / 2, z, 0);
+  for (const [no, name, color, h, z, sid] of [[14, '星光熠熠', '#A9BEF0', 0.86, -8.75, null], [4, '云朵午后', '#86C1EC', 0.64, -4.35, 'cloud'], [17, '雪绒国', '#A8C4E4', 0.31, 6.55, 'snow'], [18, '怼脸', '#E5574A', 0.12, 8.85, null]]) {
+    const sp = tab(no, name, color); const m = cardMesh(sp, 0.03, { edge: 0xffffff }); tuck(m, h, S.PW - PIN + sp.w / 2, z, 0); m.userData.fx = { kind: 'tab', sid, out: 0.45 };
   }
   for (const [no, name, color, h, x] of [[1, '柔和的海风', '#8EC5DE', 0.72, 11.4], [2, '青春校园', '#8FCFBF', 0.42, 6.9]]) {
-    const sp = tab(no, name, color, true); const m = cardMesh(sp, 0.03, { edge: 0xffffff }); tuck(m, h, x, -S.PH / 2 + PIN - sp.h / 2, 0, 'z');
+    const sp = tab(no, name, color, true); const m = cardMesh(sp, 0.03, { edge: 0xffffff }); tuck(m, h, x, -S.PH / 2 + PIN - sp.h / 2, 0, 'z'); m.userData.fx = { kind: 'tab', sid: null, out: 0.45 };
   }
   // 天头探出的车票（票根朝外）
   { const t0 = item.ticket(5.0, 2.4, { title: '雪绒国 小火车', sub: '小窗站 → 邮局站', line: '靠窗 · 3 车 7 座', no: 'No.0017', band: P.snowDeep });
     const sp = sprite(2.4, 5.0, (g) => { g.save(); g.translate(2.4, 0); g.rotate(Math.PI / 2); g.drawImage(t0.cv, 0, 0, 5.0, 2.4); g.restore(); });
-    tuck(cardMesh(sp, 0.04, { edge: 0xE9DCC6 }), 0.55, 3.6, -S.PH / 2 + 5.0 / 2 - 2.0, -6, 'z'); }
+    const tk = cardMesh(sp, 0.04, { edge: 0xE9DCC6 }); tuck(tk, 0.55, 3.6, -S.PH / 2 + 5.0 / 2 - 2.0, -6, 'z'); tk.userData.fx = { kind: 'ticket', sid: null, out: 0.75 }; }
   // 天头探出的压花叶（银杏，蜂蜜黄）
   { const sp = sprite(3.0, 5.2, (g) => {
       const cx = 1.5; g.fillStyle = '#EDBE5A'; g.beginPath(); g.moveTo(cx, 2.5); g.bezierCurveTo(cx - 1.6, 1.6, cx - 1.5, 0.2, cx - 0.7, 0.1); g.quadraticCurveTo(cx - 0.2, 0.4, cx, 0.2); g.quadraticCurveTo(cx + 0.2, 0.4, cx + 0.7, 0.1); g.bezierCurveTo(cx + 1.5, 0.2, cx + 1.6, 1.6, cx, 2.5); g.fill();
       g.strokeStyle = 'rgba(190,130,50,0.55)'; g.lineWidth = 0.022; for (let i = -6; i <= 6; i++) { g.beginPath(); g.moveTo(cx, 2.45); g.quadraticCurveTo(cx + i * 0.1, 1.5, cx + i * 0.2, 0.25); g.stroke(); }
       g.strokeStyle = '#B98A45'; g.lineWidth = 0.06; g.beginPath(); g.moveTo(cx, 2.45); g.quadraticCurveTo(cx + 0.06, 3.6, cx - 0.05, 5.1); g.stroke();
       g.save(); g.globalCompositeOperation = 'source-atop'; g.globalAlpha = 0.25; const gr = g.createRadialGradient(cx, 0.6, 0.1, cx, 0.8, 1.8); gr.addColorStop(0, '#F6D27A'); gr.addColorStop(1, '#D98E3A'); g.fillStyle = gr; g.fillRect(0, 0, 3, 3); g.restore(); });
-    tuck(cardMesh(sp, 0.016, { edge: 0xD9A040 }), 0.76, 8.9, -S.PH / 2 + 5.2 / 2 - 2.6, 14, 'z'); }
+    const lf = cardMesh(sp, 0.016, { edge: 0xD9A040 }); tuck(lf, 0.76, 8.9, -S.PH / 2 + 5.2 / 2 - 2.6, 14, 'z'); lf.userData.fx = { kind: 'leaf', sid: null, out: 0.35 }; }
   // 地脚探出的照片（官方海报整张缩小，白边；图像区不受光，保持原样）
   const photo = { mesh: null, img: 'assets/Koko_poster_cloud_afternoon_01_lying_on_cloud_v3.jpg' };
   // 地脚探出的和纸胶带尾巴
@@ -177,9 +177,10 @@ void main(){
     const lg = new THREE.ShapeGeometry(ls, 12); const lp = lg.attributes.position; for (let i = 0; i < lp.count; i++) { const x = lp.getX(i), y = lp.getY(i); lp.setZ(i, 0.35 * x * x - 0.25 * y * y * 4); } lg.computeVertexNormals();
     const leaf = new THREE.Mesh(lg, charmMat(0x93B85E, { gloss: 0.6 })); leaf.material.side = THREE.DoubleSide; leaf.rotation.set(-Math.PI / 2 + 0.35, 0.0, 2.45); leaf.position.set(-0.5, 0.45, 0.02); leaf.castShadow = true; orangeCharm.add(leaf); }
   charmGroup.add(orangeCharm);
-  let twine = null, twSh = null;
+  let twine = null, twSh = null, twBase = null;
   // pts: 中心线；最后一段躺在桌上（y≈半径）。橘子挂件接在绳尾：果蒂朝绳子
-  function layTwine(pts) { if (twine) { charmGroup.remove(twine); twine.geometry.dispose(); } if (twSh) { charmGroup.remove(twSh); twSh.geometry.dispose(); }
+  function layTwine(pts) { twBase = pts.map((p) => p.clone()); buildTwine(pts); }
+  function buildTwine(pts) { if (twine) { charmGroup.remove(twine); twine.geometry.dispose(); } if (twSh) { charmGroup.remove(twSh); twSh.geometry.dispose(); }
     const c = new THREE.CatmullRomCurve3(pts, false, 'centripetal'); twine = new THREE.Mesh(new THREE.TubeGeometry(c, 240, TW_R, 14, false), twineMat); twine.castShadow = true; twine.receiveShadow = true; charmGroup.add(twine);
     twineMat.uniforms.uLen.value = c.getLength();
     // 桌面接触影：只沿贴桌的点
@@ -311,7 +312,7 @@ void main(){
     const w = 5.0, d = w * im.height / im.width + 0.9; const bw = 0.25;
     const sp = sprite(w, d, (g) => { g.fillStyle = P.white; g.fillRect(0, 0, w, d); g.imageSmoothingQuality = 'high'; g.drawImage(im, bw, bw, w - 2 * bw, (w - 2 * bw) * im.height / im.width); hand(g, '云朵午后', bw + 0.1, d - 0.28, 0.32, P.inkBlue); });
     photoMesh = cardMesh(sp, 0.045, { edge: 0xffffff, unlit: [bw / w, (0.9 - bw) / d, 1 - bw / w, 1 - bw / d] });
-    tuck(photoMesh, 0.38, 10.6, S.PH / 2 - d / 2 + 1.75, 5, 'z'); }
+    tuck(photoMesh, 0.38, 10.6, S.PH / 2 - d / 2 + 1.75, 5, 'z'); photoMesh.userData.fx = { kind: 'photo', sid: 'cloud', out: 1.4 }; }
   // tR、tL：右/左书芯厚度；bulge(x)：书芯在 x 处的鼓起；closed：合上
   function place(tR, tL, bulge, closed) {
     const flipped = tL / S.T;
@@ -321,8 +322,24 @@ void main(){
       else { const y = S.B + (1 - h) * S.T; m.visible = (1 - h) * S.T <= tL + 0.01; m.position.set(-x, y, z);
         // 天头/地脚探出的东西：翻到左边后仍朝天头/地脚探出（只镜像 x 位置，不绕 y 转 180°——否则银杏叶会变成叶柄朝外、叶片缩进书里）
         if (m.userData.t.axis === 'z') m.rotation.set(0, -r, 0); else m.rotation.set(0, Math.PI - r, 0); m.scale.set(1, 1, 1); }
+      if (m.userData.fx) m.userData.base = { x: m.position.x, y: m.position.y, z: m.position.z, ry: m.rotation.y };
     }
   }
+  // ---- Edge widget animation handles (runtime.js drives them; rest pose = exactly what place() set) ----
+  const edgeItems = () => tucked.filter((m) => m.userData.fx && m.userData.base);
+  // s: slide-out amount 0..1 (x fx.out cm, along the item's own outward axis); w: yaw wiggle (rad)
+  function fxPose(m, s, w) { const b = m.userData.base, f = m.userData.fx, t = m.userData.t;
+    const lx = t.axis === 'x' ? 1 : 0, lz = t.axis === 'x' ? 0 : Math.sign(t.z), c = Math.cos(b.ry), sn = Math.sin(b.ry), k = s * f.out;
+    m.position.set(b.x + (lx * c + lz * sn) * k, b.y, b.z + (-lx * sn + lz * c) * k); m.rotation.set(0, b.ry + w, 0); }
+  function fxRest(m) { const b = m.userData.base; if (!b) return; m.position.set(b.x, b.y, b.z); m.rotation.set(0, b.ry, 0); }
+  // Orange charm: swing the desk end of the twine around its bend point (a = angle, rad); a = 0 restores the laid line exactly
+  const SWING_W = [0, 0, 0, 0, 0, 0, 0, 0.45, 0.8, 1];
+  function charmSwing(a) { if (!twBase) return;
+    if (a === 0) { buildTwine(twBase); return; }
+    const o = twBase[6]; const pts = twBase.map((p, i) => { const q = p.clone(); const wa = a * (SWING_W[i] ?? 1); if (!wa) return q;
+      const dx = p.x - o.x, dz = p.z - o.z, c = Math.cos(wa), sn = Math.sin(wa); q.x = o.x + dx * c - dz * sn; q.z = o.z + dx * sn + dz * c; return q; });
+    buildTwine(pts); orangeCharm.rotation.y += a * 0.5; }
+  const charmPos = (v = new THREE.Vector3()) => orangeCharm.localToWorld(v.set(0, 0.395, 0));
 
   // 烫金书名贴图（封面版心坐标；封面着色器里按 alpha 烫金 + 压印余韵）
   function makeTitleTex() {
@@ -341,5 +358,5 @@ void main(){
     g.font = '0.44px WenKai'; g.lineWidth = 0.028; const t3 = '晴 窗 手 账 · 二〇二六'; g.fillText(t3, W / 2, H - 0.74); g.strokeText(t3, W / 2, H - 0.74);
     const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.NoColorSpace; t.anisotropy = 8; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; return t;
   }
-  return { makeTitleTex, cardMat, cardMesh, tex, place, poseElastic, poseElasticOpen, layTwine, orangeCharm, charmGroup, elastic, loadPhoto, EL };
+  return { makeTitleTex, cardMat, cardMesh, tex, place, poseElastic, poseElasticOpen, layTwine, orangeCharm, charmGroup, elastic, loadPhoto, EL, edgeItems, fxPose, fxRest, charmSwing, charmPos };
 }

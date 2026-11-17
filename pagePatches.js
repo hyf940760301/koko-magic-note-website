@@ -311,7 +311,7 @@ void main(){
     g.setAttribute('aSide', new THREE.BufferAttribute(new Float32Array(B.side), 4));
     g.setAttribute('aPg', new THREE.BufferAttribute(new Float32Array(B.pg), 3));
     g.setIndex(new THREE.BufferAttribute(n > 65535 ? new Uint32Array(B.idx) : new Uint16Array(B.idx), 1));
-    const m = new THREE.Mesh(g, mat); m.frustumCulled = false;
+    const m = new THREE.Mesh(g, mat); m.frustumCulled = false; m.onBeforeRender = grabR;
     if (opts.cast !== false) m.customDepthMaterial = depthMatFor(mat.uniforms && mat.uniforms.uAtlas ? mat.uniforms.uAtlas.value : null); m.castShadow = opts.cast !== false; m.receiveShadow = true; m.visible = false; m.renderOrder = opts.order || 0;
     m.userData.loc = new Float32Array(B.pos); m.userData.lnor = new Float32Array(B.nor);
     stats.verts += n; stats.tris += B.idx.length / 3; book.add(m); return m;
@@ -378,6 +378,43 @@ void main(){
       for (const mt of [m.material]) if (mt.uniforms && mt.uniforms.uSpine) { mt.uniforms.uSpine.value = opt.spine; mt.uniforms.uLiftP.value = opt.lift || 0; }
     }
     stats.updateMs = performance.now() - t0;
+  }
+
+  // ---------------- 拿起时不露「鬼影」 ----------------
+  // 上层贴片在下层贴片顶面上的软影是画死在图集里的。某件东西被拿起、越过原本压在它上面的东西时，
+  // 这些画死的影子会跟着露在它顶面上，变成一块块深色方块。构建时把每块影子区域
+  // 「没画影子」的样子存一小块；拿起越过上面那件东西时，只把这一小块换回没影子的样子（只上传这一小块到图集），
+  // 放下再从图集画布（从没改过）取回原样。
+  // 静止时图集一个像素都不变。
+  let RENDERER = null; function grabR(r) { RENDERER = r; }
+  const ghostSnap = (src, r) => { const c = document.createElement('canvas'); c.width = r.w; c.height = r.h; c.getContext('2d').drawImage(src, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h); return c; };
+  function casterImg(Q) { // 只用到 alpha：从图集里取回这件东西的形状
+    if (Q.ghostImg) return Q.ghostImg; if (!Q.atlas || !Q.atlas.cv || !Q.cw) return null;
+    const c = document.createElement('canvas'); c.width = Q.cw; c.height = Q.ch; c.getContext('2d').drawImage(Q.atlas.cv, Q.ax, Q.ay, Q.cw, Q.ch, 0, 0, Q.cw, Q.ch); return (Q.ghostImg = c);
+  }
+  function ghostOrig(P, r) { // 原样（带影子）：图集画布本身从没改过，直接取回那一块
+    const c = r.tmp || (r.tmp = document.createElement('canvas')); c.width = r.w; c.height = r.h; c.getContext('2d').drawImage(P.atlas.cv, P.ax + r.x, P.ay + r.y, r.w, r.h, 0, 0, r.w, r.h); return c;
+  }
+  function ghostReplay(P, r, hid) { // 一部分上层还压着：从没影子的样子起，只补画还压着的那些影子
+    const c = r.tmp || (r.tmp = document.createElement('canvas')); c.width = r.w; c.height = r.h; const g = c.getContext('2d');
+    g.drawImage(r.clean, 0, 0); g.save(); g.globalCompositeOperation = 'source-atop';
+    const M0 = new DOMMatrix().translate(-r.x, -r.y).multiply(P.ghost.M0), kP = P.ghost.kP;
+    r.qs.forEach((e, i) => { if (hid[i]) return; const Q = e.Q, img = casterImg(Q); if (!img) return; const M = M0.translate(Q.cx, Q.cy).rotate(Q.rot || 0), dh = e.dh, a = e.a;
+      let [ox, oy] = vecDev(M0, SUN_OFF[0] * dh * 0.9 + 0.01, SUN_OFF[1] * dh * 0.9 + 0.015); shadowDraw(g, img, M, Q.w, Q.h, `rgba(150,88,52,${0.30 * a})`, Math.max(2, (0.05 + 1.1 * dh) * kP), ox, oy);
+      [ox, oy] = vecDev(M0, 0.012, 0.02); shadowDraw(g, img, M, Q.w, Q.h, `rgba(120,70,40,${0.22 * a})`, Math.max(1.5, 0.025 * kP), ox, oy); });
+    g.restore(); return c;
+  }
+  // 按当前抬起高度：下层 P 比上层 Q 高出（两者高差的一半）就算越过了，Q 画在 P 上的影子收起
+  function ghostSync(rec) {
+    if (!RENDERER || !rec.ghosts) return; const ups = [];
+    for (const P of rec.ghosts) { const pv = P.pop || 0;
+      for (const r of P.ghost.rs) { const hid = r.qs.map((e) => (pv - (e.Q.pop || 0) > e.thr ? 1 : 0)); const key = hid.join('');
+        if (key === r.key) continue; r.key = key;
+        ups.push([P, r, key.indexOf('1') < 0 ? ghostOrig(P, r) : key.indexOf('0') < 0 ? r.clean : ghostReplay(P, r, hid)]); } }
+    ups.forEach(([P, r, src], i) => { const At = P.atlas, tex = At.tex, gm = tex.generateMipmaps; let last = true; for (let j = i + 1; j < ups.length; j++) if (ups[j][0].atlas === At) last = false;
+      tex.generateMipmaps = gm && last;   // 同一张图集连换几块时，只在最后一块重建一次 mipmap
+      RENDERER.copyTextureToTexture(new THREE.Vector2(P.ax + r.x, At.h - (P.ay + r.y) - r.h), { image: src }, tex);
+      tex.generateMipmaps = gm; });
   }
 
   // ---------------- 绘制：阴影 / 墨迹 ----------------
@@ -452,6 +489,33 @@ void main(){
     for (const P of recs) if (P.g !== 'poster' && !P.noInk) for (const I of inks) if (bbOv(P.bb, I.bb)) {
       const g = P.sp.cv.getContext('2d'); g.save(); g.setTransform(patchM(P)); g.globalCompositeOperation = 'source-atop'; g.imageSmoothingQuality = 'high';
       g.drawImage(I.cv, I.bb[0], I.bb[1], I.bb[2] - I.bb[0], I.bb[3] - I.bb[1]); g.restore(); }
+    // 拿起不露鬼影：先记下每块影子区域没画影子时的样子（只记真能被拿起 / 跟着抬起的实心贴片）
+    const pickable = recs.filter((Q) => (Q.g === 'solid' || Q.g === 'poster') && !Q.noPick), reach = new Set();
+    for (const P of pickable) { if (P.g !== 'solid') continue; const st = 0.25; // 在它身上按 0.25cm 取点，和 pick() 同样规则看最上面是谁
+      for (let ly = -P.hh + st / 2; ly < P.hh && !reach.has(P); ly += st) for (let lx = -P.hw + st / 2; lx < P.hw; lx += st) { const [x, y] = toPage(P, lx, ly); if (!inside(P, x, y)) continue;
+        let best = null, bh = -1; for (const Q of pickable) { let hit; if (Q.g === 'poster') { const [qx, qy] = toLocal(Q, x, y); hit = Math.abs(qx) < Q.hw && Math.abs(qy) < Q.hh; } else hit = inside(Q, x, y);
+          if (!hit) continue; const h = Q.g === 'poster' ? topAt(Q.on || Q, x, y) : topAt(Q, x, y); if (!best || h > bh + 1e-4 || (Math.abs(h - bh) < 1e-4 && Q.z > best.z)) { best = Q; bh = h; } }
+        if (best && (best.on || best) === P) { reach.add(P); break; } } }
+    for (const Q of pickable) if (Q.g === 'poster' && Q.on && Q.on.g === 'solid') reach.add(Q.on);
+    const canLift = (P) => reach.has(P) || (P.on && reach.has(P.on));
+    for (const P of recs) { if (P.g !== 'solid' || P.noRecv || !canLift(P)) continue; const M0 = patchM(P); const kP = P.sp.cv.width / P.w, cw = P.sp.cv.width, ch = P.sp.cv.height;
+      let rs = [];
+      recs.forEach((Q, qi) => { if (Q === P || Q.g === 'poster' || Q.on === P || Q.noCast || !(Q.z > P.z) || !bbOv(P.bb, Q.bb, 0.6)) return;
+        const dh = Math.max(0.012, Q.avgTop - P.avgTop); const M = M0.translate(Q.cx, Q.cy).rotate(Q.rot || 0); const a = Q.g === 'soft' ? 0.45 : 1;
+        const [ox, oy] = vecDev(M0, SUN_OFF[0] * dh * 0.9 + 0.01, SUN_OFF[1] * dh * 0.9 + 0.015); const pad = 1.5 * Math.max(2, (0.05 + 1.1 * dh) * kP) + 4;
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const q = M.transformPoint(new DOMPoint(sx * Q.w / 2, sy * Q.h / 2));
+          for (const [dx, dy] of [[0, 0], [ox, oy]]) { x0 = Math.min(x0, q.x + dx); y0 = Math.min(y0, q.y + dy); x1 = Math.max(x1, q.x + dx); y1 = Math.max(y1, q.y + dy); } }
+        const r = { x: Math.max(0, Math.floor(x0 - pad)), y: Math.max(0, Math.floor(y0 - pad)), x1: Math.min(cw, Math.ceil(x1 + pad)), y1: Math.min(ch, Math.ceil(y1 + pad)),
+          qs: [{ Q, qi, dh, a, thr: Math.min(0.12, Math.max(0.015, 0.5 * (Q.avgTop - P.avgTop))) }] };
+        if (r.x1 - r.x >= 1 && r.y1 - r.y >= 1) rs.push(r); });
+      for (let again = true; again;) { again = false; // 重叠的区域并成一块
+        for (let i = 0; i < rs.length && !again; i++) for (let j = i + 1; j < rs.length && !again; j++) { const A = rs[i], B = rs[j];
+          if (A.x < B.x1 && B.x < A.x1 && A.y < B.y1 && B.y < A.y1) { A.x = Math.min(A.x, B.x); A.y = Math.min(A.y, B.y); A.x1 = Math.max(A.x1, B.x1); A.y1 = Math.max(A.y1, B.y1); A.qs = A.qs.concat(B.qs).sort((u, v) => u.qi - v.qi); rs.splice(j, 1); again = true; } } }
+      if (!rs.length) continue;
+      for (const r of rs) { r.w = r.x1 - r.x; r.h = r.y1 - r.y; r.clean = ghostSnap(P.sp.cv, r); }
+      P.ghost = { rs, M0, kP };
+    }
     // 贴片之间的投影：上层贴片在下层贴片顶面上的软影（随高差偏移、变柔）
     for (const P of recs) { if (P.g === 'poster' || P.noRecv) continue; const g = P.sp.cv.getContext('2d'); const M0 = patchM(P); const kP = P.sp.cv.width / P.w;
       for (const Q of recs) { if (Q === P || Q.g === 'poster' || Q.on === P || Q.noCast || !(Q.z > P.z) || !bbOv(P.bb, Q.bb, 0.6)) continue;
@@ -460,6 +524,7 @@ void main(){
         let [ox, oy] = vecDev(M0, SUN_OFF[0] * dh * 0.9 + 0.01, SUN_OFF[1] * dh * 0.9 + 0.015); shadowDraw(g, Q.sp.cv, M, Q.w, Q.h, `rgba(150,88,52,${0.30 * a})`, Math.max(2, (0.05 + 1.1 * dh) * kP), ox, oy);
         [ox, oy] = vecDev(M0, 0.012, 0.02); shadowDraw(g, Q.sp.cv, M, Q.w, Q.h, `rgba(120,70,40,${0.22 * a})`, Math.max(1.5, 0.025 * kP), ox, oy);
         g.restore(); } }
+    for (const P of recs) if (P.ghost) for (const r of P.ghost.rs) { r.key = r.qs.map(() => 0).join(''); stats.ghostPx = (stats.ghostPx || 0) + r.w * r.h; }
     tm.paint = performance.now() - tb0;
     // 图集 + 网格
     const solidAt = packAtlases(solids), softAt2 = softs.length ? packAtlases(softs, 4096, 4096, 10) : [];
@@ -511,7 +576,8 @@ void main(){
       return W.path2.map((p, i) => [p.x, p.y, h[i]]);
     }
     tm.geo = performance.now() - tb0; stats['build_' + key] = Object.fromEntries(Object.entries(tm).map(([a, b]) => [a, Math.round(b)]));
-    const rec = { key, recs, meshes, byId, slot: null, cacheKey: '' };
+    for (const P of recs) if (P.sp && P.sp.cv && P.g !== 'poster') { P.cw = P.sp.cv.width; P.ch = P.sp.cv.height; }
+    const rec = { key, recs, meshes, byId, slot: null, cacheKey: '', ghosts: recs.filter((P) => P.ghost) };
     pages[key] = rec;
     // 底图绘制：墨迹 + 每个贴片在纸面上的软投影（接触影 + 随高度偏移的柔影 + 翘角处更远更柔的影）
     rec.paintBase = (g, k) => { const tp = performance.now();
@@ -591,6 +657,7 @@ void main(){
       T.pop = v;
     }
     rec.cacheKey = '';
+    ghostSync(rec);
   }
   function setPosterMap(key, id, tex) {
     const rec = pages[key]; if (!rec) return false;

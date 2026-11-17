@@ -23,6 +23,9 @@ canvas{display:block;width:100%;height:100%;touch-action:none;user-select:none;-
 .fly-nav{position:fixed;top:50%;z-index:13;width:44px;height:44px;margin-top:-22px;border:0;border-radius:50%;background:rgba(255,248,238,.92);color:#8A5A40;font:700 28px/1 ChillRound,sans-serif;box-shadow:0 4px 14px rgba(60,30,14,.28);cursor:pointer;pointer-events:auto}
 .fly-nav.prev{left:max(18px,4vw)}.fly-nav.next{right:max(18px,4vw)}
 .fly-nav:active{transform:scale(.96)}
+#home{position:fixed;right:max(18px,4vw);bottom:max(18px,4vh);z-index:8;height:44px;padding:0 16px;border:0;border-radius:22px;background:rgba(255,248,238,.92);color:#8A5A40;font:700 16px/1 ChillRound,'PingFang SC',sans-serif;letter-spacing:.12em;box-shadow:0 4px 14px rgba(60,30,14,.28);cursor:pointer;pointer-events:none;opacity:0;transform:translateY(8px);transition:opacity .28s ease,transform .28s ease}
+#home.on{pointer-events:auto;opacity:1;transform:none}
+#home:active{transform:scale(.96)}
 .fly-dots{position:fixed;left:50%;bottom:max(22px,4vh);z-index:13;display:flex;gap:8px;transform:translateX(-50%);pointer-events:none}
 .fly-dots i{width:8px;height:8px;border-radius:50%;background:rgba(255,248,238,.45);display:block}
 .fly-dots i.on{background:#FFF8EE;box-shadow:0 0 0 2px rgba(232,132,92,.55)}
@@ -30,5 +33,6 @@ canvas{display:block;width:100%;height:100%;touch-action:none;user-select:none;-
 </style></head><body>
 <div id="loading"><i></i><span>正在把手账放到桌子上</span><b><em></em></b></div>
 <div id="ui"><input id="sl" type="range" min="0" max="1000" value="500" style="width:300px"></div>
+<button id="home" type="button" aria-label="合上">合上</button>
 <script type="module" src="main.js"></script>
 </body></html>

@@ -16,7 +16,7 @@ export function startRuntime(E) {
   const OPEN_FROM = 550;                 // 点下去后从时间线的这一刻起播：先看到扣子被按下再弹开，不干等
   const OPEN_END = TL.sigEnd + 300;      // 签名写完稍停就可以翻页（纸偶站起来的那一秒留给后面做）
   let mode = 'cover', modeT = 0, time = 0, last = performance.now(), timeScale = 1;
-  let spread = 0, turn = null, queue = [], turnedOnce = false, idleT = 0, hints = 0;
+  let spread = 0, turn = null, queue = [], turnedOnce = false, idleT = 0, hints = 0, wantClose = false;
   const ptr = { x: 0, y: 0, cx: -1, cy: -1, inside: false };   // x、y：-1..1；cx、cy：屏幕坐标
   const par = { x: 0, y: 0 };                                  // 首屏指针视差（慢半拍）
   const clasp = { s: 1, sv: 0, lift: 0, lv: 0, nextWiggle: 4.5, hover: false };
@@ -42,7 +42,7 @@ export function startRuntime(E) {
   const setCursor = (c) => { if (canvas.style.cursor !== c) canvas.style.cursor = c; };
 
   // ---------- 合上（首屏） ----------
-  function enterCover() { clearPops(); mode = 'cover'; modeT = 0; dolly = 0; dollySpeed = 1; openAfter = false; turn = null; queue = []; E.poseCover(); shadowHold = 3; }
+  function enterCover() { clearPops(); clearEdge(); wantClose = false; mode = 'cover'; modeT = 0; dolly = 0; dollySpeed = 1; openAfter = false; turn = null; queue = []; spread = 0; turnedOnce = false; hints = 0; idleT = 0; E.poseCover(); shadowHold = 3; showHome(false); }
   function coverPose() { const C = E.camPoses(); return E.lerpPose(C.est0, C.est1, smoother(dolly)); }
   function frameCover(dt) {
     dolly = Math.min(1, dolly + dt * dollySpeed / DOLLY_SEC);
@@ -59,7 +59,7 @@ export function startRuntime(E) {
   }
   function startOpening() {
     if (mode !== 'cover') return;
-    open.from = sway(coverPose()); open.ms = OPEN_FROM; open.speed = openAfter ? Math.max(open.speed, 2.4) : 1; openAfter = false; mode = 'opening'; modeT = 0; setCursor('default');
+    open.from = sway(coverPose()); open.ms = OPEN_FROM; open.speed = openAfter ? Math.max(open.speed, 2.4) : 1; openAfter = false; mode = 'opening'; modeT = 0; setCursor('default'); showHome(false);
   }
   // 等不及：同一条镜头和开书过程接着播，只是更快。最快约 3 倍，不会把剩余动画压进一瞬间。
   function hurryIntro() {
@@ -67,6 +67,41 @@ export function startRuntime(E) {
     if (mode === 'opening') open.speed = Math.min(2.8, open.speed + 0.85);
   }
   function skipOpening() { if (mode === 'opening') open.speed = Math.max(open.speed, 2.8); }
+  const homeBtn = document.getElementById('home');
+  function showHome(on) { if (homeBtn) homeBtn.classList.toggle('on', !!on); }
+  if (homeBtn) homeBtn.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); requestClose(); });
+  // 合书重置：先收回放大/弹起的物件，再翻回扉页，然后倒放开场（封面合上、搭扣扣上、镜头拉回桌面全景）
+  function requestClose() {
+    if (mode === 'cover' || mode === 'closing' || wantClose) return;
+    if (mode !== 'read') return;
+    wantClose = true; showHome(false); setHover(null); setEdgeHover(null); setCursor('default');
+    if (fly) closeFly();
+    clearPops(); clearEdge();
+    if (down.active) down.active = false;
+    jump = 0;
+    if (turn) {
+      turn.auto = null; turn.held = false; turn.fast = true;
+      if (turn.peek) { turn.peek = false; turn.target = turn.p < 0.5 ? 0 : 1; }
+    }
+  }
+  function startClosing() {
+    clearPops(); clearEdge(); jump = null; turn = null; queue = [];
+    wantClose = false; mode = 'closing'; modeT = 0; spread = 0;
+    open.ms = OPEN_END; open.speed = 1; setCursor('default'); shadowHold = 3;
+  }
+  function frameClosing(dt) {
+    // 签名倒放加快，封面、搭扣和镜头按开场时间线倒放
+    const sp = open.ms > E.TL.coverEnd ? 3.4 : 1.55;
+    open.ms = Math.max(0, open.ms - dt * 1000 * open.speed * sp);
+    E.poseOpening(open.ms);
+    const u = E.clamp01((open.ms - OPEN_FROM) / (E.TL.popStart - OPEN_FROM));
+    E.claspBtn(1, 0.03 * Math.sin(Math.PI * u));
+    const t = smoother((open.ms - E.TL.camStart) / (E.TL.camEnd - E.TL.camStart)); const C = E.camPoses();
+    E.setCam(E.lerpPose(C.est0, C.read, t), new THREE.Vector3(S.CW / 2 * (1 - t), 2.5 - 0.5 * t, 0));
+    E.setRead(t);
+    if (open.ms < E.TL.popStart && t <= 0) enterCover();
+    return { dust: 1 - t, shadows: true };
+  }
   function frameOpening(dt) {
     open.ms = Math.min(OPEN_END, open.ms + dt * 1000 * open.speed);
     E.poseOpening(open.ms);
@@ -79,7 +114,7 @@ export function startRuntime(E) {
   }
 
   // ---------- 阅读与翻页 ----------
-  function enterRead(s) { E.setRead(1); mode = 'read'; modeT = 0; spread = s; turn = null; queue = []; idleT = 0; E.poseSpread(s); shadowHold = 3; }
+  function enterRead(s) { E.setRead(1); jump = null; wantClose = false; mode = 'read'; modeT = 0; spread = s; turn = null; queue = []; idleT = 0; E.poseSpread(s); shadowHold = 3; showHome(true); }
   // 整页都能抓住。side：1 右页往后翻，-1 左页往前翻。inCorner 只用于没按下时的书角提示。
   function zoneAt(cx, cy) {
     const Y = E.pageY(spread);
@@ -122,8 +157,17 @@ export function startRuntime(E) {
   }
   function frameRead(dt) {
     let shadows = false; idleT += dt;
+    // Index tab / photo clicked: keep turning (normal page-turn animation) until the target spread is open
+    if (jump != null && !down.active && !fly && (!turn || turn.peek)) {
+      if (spread === jump) jump = null;
+      else { const dir = jump > spread ? 1 : -1; requestTurn(dir); if (turn && !turn.peek) { turn.fast = Math.abs(jump - spread) > 1 || wantClose; turnedOnce = true; } else jump = null; }
+    }
+    if (wantClose && !fly && jump == null && spread === 0 && !down.active && (!turn || (turn.peek && turn.p < 0.04 && !turn.held))) {
+      if (turn) { turn = null; E.poseSpread(0); }
+      startClosing(); return { dust: 0, shadows: true };
+    }
     // 没翻过页之前，隔一会儿右下角自己翘一下，提示这里可以翻
-    if (!turn && !turnedOnce && hints < 2 && idleT > 3 && !down.active && !hoverP && !fly) { hints++; beginTurn(spread, 0, 1); turn.peek = true; turn.auto = 0.9; turn.target = TURN.peek; }
+    if (!wantClose && !turn && !turnedOnce && hints < 2 && idleT > 3 && !down.active && !hoverP && !fly) { hints++; beginTurn(spread, 0, 1); turn.peek = true; turn.auto = 0.9; turn.target = TURN.peek; }
     if (turn) {
       const T = turn; shadows = true;
       if (T.auto != null) { T.auto -= dt; if (T.auto <= 0) { T.auto = null; T.target = 0; idleT = -3.5; } }
@@ -145,6 +189,7 @@ export function startRuntime(E) {
       E.updateTurn(T.leaf, T.p, T.corner, T.lift);
     }
     if (stepPops(dt)) shadows = true;
+    if (stepEdge(dt)) shadows = true;
     E.setCam(dbgCam || E.camPoses().read, new THREE.Vector3(0, 2, 0));
     return { dust: 0, shadows };
   }
@@ -182,6 +227,62 @@ export function startRuntime(E) {
     return any;
   }
   function clearPops() { for (const o of pops.values()) E.pop(o.key, o.P, 0, 0); pops.clear(); hoverP = null; }
+  // ---------- Book-edge widgets: tucked tabs, ticket, ginkgo leaf, photo; orange charm on its twine; enamel clasp ----------
+  // Hover: tabs / ticket / photo slide out a little, leaf wiggles, charm swings, clasp swells. Click: clasp clicks, tabs / photo
+  // whose series has pages turn the book there; everything else pulls out and wiggles. All springs settle to the exact rest pose.
+  const EDGE = { slide: { k: 150, c: 14 }, wig: { k: 140, c: 4.2 }, swing: { k: 38, c: 3 }, press: { k: 520, c: 26 } };
+  const edgeFx = new Map();                                     // mesh -> { s, sv, st, w, wv }
+  const charm = { a: 0, av: 0, on: false }, cl = { s: 1, sv: 0, p: 0, pv: 0, on: false, hover: false };
+  let edgeHov = null, jump = null;
+  function edgeAt(cx, cy) {
+    const D = E.dress(); if (!D) return null;
+    const items = D.edgeItems().filter((m) => m.visible);
+    for (const h of E.rayHits(cx, cy, items)) { const p = h.point; if (Math.abs(p.x) > S.PW + 0.02 || Math.abs(p.z) > S.PH / 2 + 0.02) return { kind: 'item', m: h.object }; }
+    if (E.rayNear(cx, cy, D.charmPos(), 0.8)) return { kind: 'charm' };
+    if (E.claspObj.parent && E.claspObj.parent.parent && E.claspObj.parent.parent.visible && E.rayHits(cx, cy, [E.claspObj], true).length) return { kind: 'clasp' };
+    return null;
+  }
+  const sameEdge = (a, b) => (a && b ? a.kind === b.kind && a.m === b.m : a === b);
+  function fxOf(m) { let o = edgeFx.get(m); if (!o) { o = { s: 0, sv: 0, st: 0, w: 0, wv: 0 }; edgeFx.set(m, o); } return o; }
+  function setEdgeHover(ed) {
+    if (sameEdge(ed, edgeHov)) return;
+    if (edgeHov && edgeHov.kind === 'item') { const o = edgeFx.get(edgeHov.m); if (o) o.st = 0; }
+    if (edgeHov && edgeHov.kind === 'clasp') cl.hover = false;
+    edgeHov = ed; if (!ed) return;
+    if (ed.kind === 'item') { const o = fxOf(ed.m), k = ed.m.userData.fx.kind; o.st = 1; o.wv += (k === 'leaf' ? 2.6 : 0.9) * (Math.random() < 0.5 ? -1 : 1); }
+    else if (ed.kind === 'charm') { charm.on = true; if (Math.abs(charm.a) < 0.12) charm.av += 1.1 * (Math.random() < 0.5 ? -1 : 1); }
+    else { cl.on = true; cl.hover = true; }
+  }
+  function edgeClick(ed) {
+    if (ed.kind === 'item') {
+      const f = ed.m.userData.fx, o = fxOf(ed.m);
+      const s = f.sid && E.series[f.sid] ? E.spreadOf(E.series[f.sid].page) : -1;
+      o.sv += 4.5; o.wv += 3 * (Math.random() < 0.5 ? -1 : 1);
+      if (s >= 0 && s !== spread) jump = s;
+    } else if (ed.kind === 'charm') { charm.on = true; charm.av += 2.6 * (charm.av >= 0 ? 1 : -1); }
+    else { cl.on = true; cl.pv += 3.2; cl.sv -= 3.4; }                     // "click": button pressed in, then pops back proud
+  }
+  function stepEdge(dt) {
+    let any = false; const D = E.dress(); if (!D) return false;
+    for (const [m, o] of edgeFx) {
+      stepSpring(o, 's', 'sv', o.st, EDGE.slide, dt); stepSpring(o, 'w', 'wv', 0, EDGE.wig, dt); any = true;
+      if (o.st === 0 && Math.abs(o.s) < 2e-4 && Math.abs(o.sv) < 2e-3 && Math.abs(o.w) < 2e-4 && Math.abs(o.wv) < 2e-3) { D.fxRest(m); edgeFx.delete(m); shadowHold = Math.max(shadowHold, 2); }
+      else D.fxPose(m, Math.max(-0.15, o.s), o.w);
+    }
+    if (charm.on) { stepSpring(charm, 'a', 'av', 0, EDGE.swing, dt); any = true;
+      if (Math.abs(charm.a) < 1e-3 && Math.abs(charm.av) < 5e-3) { charm.a = 0; charm.av = 0; charm.on = false; D.charmSwing(0); shadowHold = Math.max(shadowHold, 2); }
+      else D.charmSwing(Math.max(-0.5, Math.min(0.5, charm.a))); }
+    if (cl.on) { stepSpring(cl, 's', 'sv', cl.hover ? 1.06 : 1, SPRING.hover, dt); stepSpring(cl, 'p', 'pv', 0, EDGE.press, dt); any = true;
+      if (!cl.hover && Math.abs(cl.s - 1) < 2e-4 && Math.abs(cl.sv) < 2e-3 && Math.abs(cl.p) < 2e-4 && Math.abs(cl.pv) < 2e-3) { cl.s = 1; cl.sv = 0; cl.p = 0; cl.pv = 0; cl.on = false; E.claspBtn(1, 0); shadowHold = Math.max(shadowHold, 2); }
+      else E.claspBtn(cl.s, Math.max(-0.03, Math.min(0.1, cl.p))); }
+    return any;
+  }
+  function clearEdge() {
+    const D = E.dress(); edgeHov = null; jump = null;
+    if (D) { for (const m of edgeFx.keys()) D.fxRest(m); if (charm.on) D.charmSwing(0); }
+    edgeFx.clear(); charm.a = charm.av = 0; charm.on = false;
+    if (cl.on) { cl.s = 1; cl.sv = cl.p = cl.pv = 0; cl.on = false; cl.hover = false; E.claspBtn(1, 0); }
+  }
   // 收纳口 / 单张放大：从书页位置飞到画面中间；多张时可左右切换，收回后页上露出当前这张
   let fly = null;
   function openFly(pk) {
@@ -208,7 +309,7 @@ export function startRuntime(E) {
       prev.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); switchFly(-1); });
       next.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); switchFly(1); });
     }
-    document.body.append(veil, box); setHover(null); setCursor('default');
+    document.body.append(veil, box); setHover(null); setCursor('default'); showHome(false);
     fly = { veil, box, img, from, to, closing: false, images, idx: idx0, series: pk.pocket ? pk.pocket.id : null, key: pk.key, P: pk.P, dots, w, h };
     const start = () => requestAnimationFrame(() => requestAnimationFrame(() => { veil.classList.add('on'); box.classList.add('on'); img.style.transform = to; }));
     if (img.complete) start(); else img.onload = start;
@@ -231,11 +332,11 @@ export function startRuntime(E) {
   function closeFly() {
     if (!fly || fly.closing) return; const f = fly; f.closing = true; f.veil.classList.remove('on'); f.box.classList.remove('on'); f.img.style.transform = f.from;
     if (f.series) E.setSeriesCover(f.series, f.idx);
-    setTimeout(() => { f.veil.remove(); f.box.remove(); if (fly === f) fly = null; }, 620);
+    setTimeout(() => { f.veil.remove(); f.box.remove(); if (fly === f) fly = null; if (mode === 'read' && !wantClose) showHome(true); }, 620);
   }
 
   // ---------- 输入 ----------
-  const down = { active: false, id: -1, x: 0, y: 0, t: 0, moved: 0, armed: false, zone: null, item: null };
+  const down = { active: false, id: -1, x: 0, y: 0, t: 0, moved: 0, armed: false, zone: null, item: null, edge: null };
   function setPtr(ev) { const r = canvas.getBoundingClientRect(); ptr.cx = ev.clientX; ptr.cy = ev.clientY; ptr.x = ((ev.clientX - r.left) / r.width) * 2 - 1; ptr.y = -(((ev.clientY - r.top) / r.height) * 2 - 1); ptr.inside = true; }
   function pressLift(z) {
     const leaf = leafFor(z.side);
@@ -249,10 +350,13 @@ export function startRuntime(E) {
     setPtr(ev);
     if (mode === 'cover') { if (E.hitBook(ev.clientX, ev.clientY)) { if (dolly < 0.995) { openAfter = true; hurryIntro(); } else startOpening(); } return; }
     if (mode === 'opening') { hurryIntro(); return; }
-    if (fly) return;
+    if (mode === 'closing') { open.speed = Math.min(2.8, open.speed + 0.85); return; }
+    if (fly || wantClose) return;
     if (turn && !turn.peek) return;
     const z = zoneAt(ev.clientX, ev.clientY), pk = E.pick(ev.clientX, ev.clientY, spread);
     down.active = true; down.id = ev.pointerId; down.x = ev.clientX; down.y = ev.clientY; down.t = performance.now(); down.moved = 0; down.armed = false; down.zone = z && canGrab(z.side) ? z : null; down.item = pk;
+    down.edge = !pk && (!turn || turn.peek) ? edgeAt(ev.clientX, ev.clientY) : null;
+    if (down.edge) { down.zone = null; canvas.setPointerCapture(ev.pointerId); ev.preventDefault(); return; }
     // 点在实心物件 / 海报收纳口上：先不掀页，短点＝互动，拖开才翻页
     const blockPeek = pk && pk.P.g !== 'soft';
     if (down.zone && !blockPeek) { pressLift(down.zone); canvas.setPointerCapture(ev.pointerId); setCursor('grabbing'); ev.preventDefault(); }
@@ -283,9 +387,13 @@ export function startRuntime(E) {
     if (ev.pointerType === 'touch') return;
     const z = zoneAt(ev.clientX, ev.clientY), pk = E.pick(ev.clientX, ev.clientY, spread);
     const can = z && canGrab(z.side);
-    if (turn && !turn.peek) { setCursor('default'); return; }
+    if (turn && !turn.peek) { setEdgeHover(null); setCursor('default'); return; }
+    const ed = !pk ? edgeAt(ev.clientX, ev.clientY) : null; setEdgeHover(ed);
+    if (ed) { setHover(null); setCursor('pointer'); if (turn && turn.peek && turn.auto == null) turn.target = turn.p < 0.5 ? 0 : 1; return; }
     if (!turn) setHover(pk && !pk.fly ? pk : null);
-    setCursor(pk ? (pk.fly || pk.pocket ? 'zoom-in' : 'pointer') : can ? 'grab' : 'default');
+    const held = pk && pops.get(pk.P) && pops.get(pk.P).target > 0.2;
+    const zoom = pk && (pk.fly || pk.pocket) && !(pk.P.holdThenFly && !held);
+    setCursor(pk ? (zoom ? 'zoom-in' : 'pointer') : can ? 'grab' : 'default');
     if (can && !pk && z.inCorner) {
       const leaf = leafFor(z.side);
       if (turn && turn.leaf !== leaf) { turn.target = turn.p < 0.5 ? 0 : 1; commitTurn(); }
@@ -296,8 +404,9 @@ export function startRuntime(E) {
   function release(ev) {
     if (!down.active || ev.pointerId !== down.id) return;
     const click = performance.now() - down.t < TURN.clickMs && down.moved < TURN.clickPx;
-    const zone = down.zone, item = down.item, armed = down.armed;
-    down.active = false; down.zone = null; down.item = null;
+    const zone = down.zone, item = down.item, armed = down.armed, edge = down.edge;
+    down.active = false; down.zone = null; down.item = null; down.edge = null;
+    if (edge) { if (click && mode === 'read') edgeClick(edge); setCursor(sameEdge(edge, edgeHov) ? 'pointer' : 'default'); return; }
     if (armed && turn && turn.held) {
       const T = turn; T.held = false;
       if (T.limit < 1) { T.target = 0; T.v = click ? 1.6 : T.vp; }
@@ -305,7 +414,9 @@ export function startRuntime(E) {
       else { T.target = T.vp > TURN.flick ? 1 : T.vp < -TURN.flick ? 0 : T.p > 0.5 ? 1 : 0; T.v = Math.max(-6, Math.min(6, T.vp)); }
     } else if (click && item && (item.pocket || item.fly)) {
       if (turn && turn.peek) turn.target = turn.p < 0.5 ? 0 : 1;
-      openFly(item);
+      const up = pops.get(item.P) && pops.get(item.P).target > 0.2;
+      if (item.P.holdThenFly && !up) toggleHold(item);
+      else { if (item.P.holdThenFly && up) pops.get(item.P).target = 0; openFly(item); }
     } else if (click && item) {
       if (turn && turn.peek) turn.target = turn.p < 0.5 ? 0 : 1;
       if (item.P.g !== 'soft') toggleHold(item); else pokeItem(item);
@@ -314,10 +425,11 @@ export function startRuntime(E) {
     setCursor('default');
   }
   canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', release);
-  canvas.addEventListener('pointerleave', () => { ptr.inside = false; setHover(null); if (turn && turn.peek && turn.auto == null) turn.target = turn.p < 0.5 ? 0 : 1; });
+  canvas.addEventListener('pointerleave', () => { ptr.inside = false; setHover(null); setEdgeHover(null); if (turn && turn.peek && turn.auto == null) turn.target = turn.p < 0.5 ? 0 : 1; });
   addEventListener('keydown', (ev) => {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     const k = ev.key;
+    if (k === 'Home' || k === 'R' || k === 'r') { requestClose(); ev.preventDefault(); return; }
     if (fly) {
       if (k === 'Escape') { closeFly(); ev.preventDefault(); return; }
       if (k === 'ArrowRight' || k === 'ArrowLeft') {
@@ -330,6 +442,8 @@ export function startRuntime(E) {
     }
     if (mode === 'cover') { if (k === 'Enter' || k === ' ') { if (dolly < 0.995) { openAfter = true; hurryIntro(); } else startOpening(); ev.preventDefault(); } return; }
     if (mode === 'opening') { hurryIntro(); return; }
+    if (mode === 'closing') { open.speed = Math.min(2.8, open.speed + 0.85); ev.preventDefault(); return; }
+    if (wantClose) { ev.preventDefault(); return; }
     if (k === 'ArrowRight' || k === ' ' || k === 'PageDown') { requestTurn(1); ev.preventDefault(); }
     else if (k === 'ArrowLeft' || k === 'PageUp') { requestTurn(-1); ev.preventDefault(); }
   });
@@ -342,7 +456,8 @@ export function startRuntime(E) {
       return;
     }
     if (mode === 'cover' || mode === 'opening') { ev.preventDefault(); hurryIntro(); return; }
-    if (mode !== 'read') return; ev.preventDefault();
+    if (mode === 'closing') { ev.preventDefault(); open.speed = Math.min(2.8, open.speed + 0.85); return; }
+    if (mode !== 'read' || wantClose) { ev.preventDefault(); return; }
     const d = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY; wheel.acc += d;
     if (!wheel.fired && Math.abs(wheel.acc) > 40) { wheel.fired = true; requestTurn(wheel.acc > 0 ? 1 : -1); }
     clearTimeout(wheel.timer); wheel.timer = setTimeout(() => { wheel.acc = 0; wheel.fired = false; }, 180);
@@ -354,7 +469,7 @@ export function startRuntime(E) {
     requestAnimationFrame(frame);
     const raw = (now - last) / 1000; last = now; const dt = Math.min(0.05, Math.max(0.001, raw)) * timeScale; time += dt; modeT += dt;
     const c0 = performance.now();
-    const r = mode === 'cover' ? frameCover(dt) : mode === 'opening' ? frameOpening(dt) : frameRead(dt);
+    const r = mode === 'cover' ? frameCover(dt) : mode === 'opening' ? frameOpening(dt) : mode === 'closing' ? frameClosing(dt) : frameRead(dt);
     const sh = r.shadows || shadowHold > 0; if (shadowHold > 0) shadowHold--;
     E.render(12 + time, { dust: r.dust, shadows: sh });
     const cpu = performance.now() - c0; stat.cpu = 0.9 * stat.cpu + 0.1 * cpu; if (cpu > stat.cpuMax) stat.cpuMax = cpu;
@@ -369,14 +484,24 @@ export function startRuntime(E) {
     get mode() { return mode; }, get spread() { return spread; }, get spreads() { return E.spreads; },
     get turn() { return turn ? { leaf: turn.leaf, p: +turn.p.toFixed(3), target: turn.target, held: turn.held, peek: turn.peek } : null; },
     open: startOpening, skip: skipOpening, turnPage: requestTurn,
-    goto(s) { enterRead(Math.max(0, Math.min(E.spreads - 1, s))); turnedOnce = true; },
-    close: enterCover,
+    goto(s) { enterRead(Math.max(0, Math.min(E.spreads - 1, s))); turnedOnce = true; showHome(true); },
+    close: enterCover, goHome: requestClose,
     stats: () => { const r = { frameMs: +stat.dt.toFixed(1), cpuMs: +stat.cpu.toFixed(2), cpuMaxMs: +stat.cpuMax.toFixed(1), scale: E.quality.scale, size: E.renderSize(), mode, spread, openMs: Math.round(open.ms) }; stat.cpuMax = 0; return r; },
     // 自测：把某一张纸停在翻到 p 的位置（leaf 传 null 放下）；cam 传 [位置, 目标, 视角] 临时换机位（传 null 还原）
     hold(leaf, p = 0.5, corner = 1) { if (mode !== 'read') return; if (turn) { turn.target = turn.p < 0.5 ? 0 : 1; commitTurn(); } if (leaf == null) return; beginTurn(leaf, p, corner); turn.held = true; turn.pT = p; turnedOnce = true; },
     cam(c) { dbgCam = c ? { pos: new THREE.Vector3(...c[0]), target: new THREE.Vector3(...c[1]), fov: c[2] || 28 } : null; },
-    get fly() { return !!fly; }, get pops() { return pops.size; },
-    slow(k) { timeScale = k; },                                   // 慢放（自测截图用）
+    get fly() { return !!fly; }, get pops() { return pops.size; }, get edge() { return { fx: edgeFx.size, charm: charm.on, clasp: cl.on, jump }; },
+    slow(k) { timeScale = k; },
+    edgeDebug() { // self-test: rest poses + a screen-pickable world point per edge widget
+      const D = E.dress(); if (!D) return null; const v = new THREE.Vector3();
+      const items = D.edgeItems().filter((m) => m.visible).map((m) => { m.geometry.computeBoundingBox(); const bb = m.geometry.boundingBox; let n = 0, sx = 0, sy = 0, sz = 0;
+        for (let i = 0; i <= 8; i++) for (let j = 0; j <= 8; j++) { v.set(bb.min.x + (bb.max.x - bb.min.x) * i / 8, bb.max.y, bb.min.z + (bb.max.z - bb.min.z) * j / 8); m.localToWorld(v);
+          if (Math.abs(v.x) > S.PW + 0.25 || Math.abs(v.z) > S.PH / 2 + 0.25) { n++; sx += v.x; sy += v.y; sz += v.z; } }
+        return { kind: m.userData.fx.kind, sid: m.userData.fx.sid, pt: n ? [sx / n, sy / n, sz / n] : null, pose: [m.position.x, m.position.y, m.position.z, m.rotation.y] }; });
+      let h = 0; for (const ch of D.charmGroup.children) { if (!ch.geometry) continue; const a = ch.geometry.attributes.position.array; for (let i = 0; i < a.length; i += 5) h = (h * 31 + Math.round(a[i] * 1e4)) | 0; }
+      const c = D.charmPos(), b = new THREE.Vector3(); E.claspObj.getWorldPosition(b);
+      return { items, charm: [c.x, c.y, c.z], charmRot: D.orangeCharm.rotation.y, twine: h, clasp: [b.x, b.y, b.z, E.claspObj.scale.x, E.claspObj.position.y] };
+    },                                   // 慢放（自测截图用）
     bench(n = 40) { // 当前画面连画 n 帧、每帧等显卡画完：得到「一帧真实要花多久」（含重画影子图，最坏情况）
       const gl = E.gl(), px = new Uint8Array(4), ts = [];
       for (let i = 0; i < n; i++) { const t0 = performance.now(); E.render(12 + time + i * 0.016, { dust: mode === 'cover' ? 1 : 0, shadows: true }); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); ts.push(performance.now() - t0); }
